@@ -30,6 +30,9 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:?AWS_S3_BUCKET must be provided}
       AWS_S3_URL_DURATION: ${AWS_S3_URL_DURATION:-15}
+      LOG_FILE: /app/logs/app.log
+    volumes:
+      - /opt/clouddeploy/logs/backend:/app/logs
     networks:
       - clouddeploy-net
     healthcheck:
@@ -56,6 +59,8 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+    volumes:
+      - /opt/clouddeploy/logs/nginx:/var/log/nginx
     networks:
       - clouddeploy-net
     healthcheck:

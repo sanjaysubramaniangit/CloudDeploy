@@ -5,11 +5,17 @@ CloudDeploy AI is a production-oriented cloud engineering and deployment managem
 
 ---
 
-## Current Status: Phase 11 Complete
-The platform has completed **Phase 11: GitHub Actions CI/CD Pipeline**.
+## Current Status: Phase 12 Complete
+The platform has completed **Phase 12: CloudWatch Observability & Production Monitoring**.
 
-### Key Capabilities Across Phases 1–11
-1. **GitHub Actions CI/CD & Controlled Deployment with Health-Gated Rollback**:
+### Key Capabilities Across Phases 1–12
+1. **Amazon CloudWatch Observability & Production Monitoring**:
+   - Host-level Amazon CloudWatch Agent running under systemd on Amazon Linux 2023 for independent, fault-tolerant telemetry collection decoupled from the Docker daemon.
+   - Custom least-privilege IAM policy (`CloudDeployObservabilityPolicy`) restricting `cloudwatch:PutMetricData` strictly to namespaces `CWAgent` and `CloudDeploy/Application`, and scoping log actions to `/clouddeploy/*`.
+   - Low-cardinality custom metric architecture: `mem_used_percent` (RAM), `disk_used_percent` (root `/`), and synthetic `HealthCheckStatus` (1 = UP, 0 = DOWN) published every 60s via local cron.
+   - Declarative CloudFormation alarms (5 alarms): `StatusCheckFailed`, `HighMemoryUtilization` (>= 85%), `HighCPUUtilization` (>= 80%), `LowDiskSpace` (>= 85%), and `ApplicationHealthFailure` with `TreatMissingData: breaching` for fail-dead heartbeat detection.
+   - Two-tier log management: Host logrotate (`/etc/logrotate.d/clouddeploy`) rotating daily with 7 compressed archives, and CloudWatch Log Groups enforcing 14-day retention (`RetentionInDays: 14`) across backend, Nginx access/error, deployment, and system streams.
+2. **GitHub Actions CI/CD & Controlled Deployment with Health-Gated Rollback**:
    - Automated pull-request validation (`.github/workflows/pr-checks.yml`) running all 126 backend integration tests, Vite frontend production build, and configuration linting with zero AWS credentials.
    - Production deployment pipeline (`.github/workflows/deploy.yml`) triggered on pushes to `main` with concurrency control (`production-deployment`).
    - Secure AWS OpenID Connect (OIDC) federation eliminating static AWS access keys from GitHub Secrets.
@@ -246,6 +252,7 @@ cd /opt/clouddeploy && docker compose -f docker-compose.prod.yml up -d
 ---
 
 ## Architecture & Security Documentation
+- [Amazon CloudWatch Observability & Monitoring Guide](docs/CLOUDWATCH_OBSERVABILITY.md)
 - [CI/CD Pipeline Architecture & Deployment Runbook](docs/CI_CD_PIPELINE.md)
 - [AWS Cloud Infrastructure Architecture](docs/AWS_INFRASTRUCTURE.md)
 - [Production Docker Deployment Guide](docs/DOCKER_DEPLOYMENT.md)

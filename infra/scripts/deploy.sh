@@ -37,6 +37,13 @@ fi
 APP_DIR="/opt/clouddeploy"
 STATE_FILE="${APP_DIR}/.current_deploy"
 ENV_FILE="${APP_DIR}/.env"
+LOG_DIR="${APP_DIR}/logs"
+mkdir -p "$LOG_DIR"
+DEPLOY_LOG="${LOG_DIR}/deploy.log"
+
+# Tee all execution output to host deploy.log while preserving stdout for SSM
+exec > >(tee -a "$DEPLOY_LOG") 2>&1
+
 AWS_REGION="${AWS_REGION:-us-east-1}"
 ENV_NAME="${ENVIRONMENT_NAME:-clouddeploy-prod}"
 

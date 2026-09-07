@@ -40,13 +40,51 @@ curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}
     -o "${DOCKER_CONFIG_DIR}/docker-compose"
 chmod +x "${DOCKER_CONFIG_DIR}/docker-compose"
 
-# 5. Create deployment directory structure
+# 5. Create deployment and log directory structure with non-root permissions
 APP_DIR="/opt/clouddeploy"
 mkdir -p "${APP_DIR}/scripts"
+mkdir -p "${APP_DIR}/logs/backend"
+mkdir -p "${APP_DIR}/logs/nginx"
 chown -R ec2-user:ec2-user "$APP_DIR"
+# Ensure Spring Boot non-root appuser (UID 1001) can write to mounted logs
+chown -R 1001:1001 "${APP_DIR}/logs/backend"
+chmod -R 775 "${APP_DIR}/logs"
+
+# 6. Configure host-level log rotation to protect root EBS volume
+cat << 'EOF' > /etc/logrotate.d/clouddeploy
+/opt/clouddeploy/logs/*/*.log /opt/clouddeploy/logs/*.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
+EOF
+chmod 644 /etc/logrotate.d/clouddeploy
+
+# 7. Install and start Amazon CloudWatch Agent
+echo "Installing Amazon CloudWatch Agent..."
+dnf install -y amazon-cloudwatch-agent
+
+# CloudWatch Agent configuration is provisioned by CloudFormation UserData
+if [ -f "${APP_DIR}/infra/cloudwatch/amazon-cloudwatch-agent.json" ]; then
+    mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+    cp "${APP_DIR}/infra/cloudwatch/amazon-cloudwatch-agent.json" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+        -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    systemctl enable amazon-cloudwatch-agent
+fi
+
+# 8. Register synthetic health check metric cron (every 60 seconds)
+CRON_JOB="* * * * * /opt/clouddeploy/infra/scripts/health-check-metric.sh >/dev/null 2>&1"
+(crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab -
 
 echo "========================================================"
 echo "CloudDeploy AI host provisioning completed successfully!"
 echo "Docker version: $(docker --version)"
 echo "Docker Compose version: $(docker compose version)"
+echo "CloudWatch Agent status: $(systemctl is-active amazon-cloudwatch-agent || echo 'pending-config')"
 echo "========================================================"
+

@@ -199,5 +199,33 @@ This guide prepares you to explain the technical architecture, design trade-offs
    - After deploying containers with `docker compose up -d`, the script executes a multi-point health gate polling Port 80 (Nginx) and `/api/health` through the reverse proxy for up to 60 seconds.
    - If the health gate fails, `deploy.sh` automatically redeploys the previous known-good SHA recorded in `.current_deploy`, verifies rollback health, captures container diagnostic logs to stdout, and exits with a non-zero code to fail the GitHub Actions workflow.
 
+---
+
+## 12. Amazon CloudWatch Observability, Production Monitoring, Custom Metrics, and Cost-Conscious Log Retention (Phase 12)
+
+### Question: How did you design observability and monitoring for CloudDeploy AI, and how do you ensure high-fidelity alerting while minimizing cloud costs?
+**Talking Points:**
+1. **Host-Level Agent vs. Containerized Agent Architecture**:
+   - The CloudWatch Agent is installed natively on the EC2 host managed by Amazon Linux 2023 `systemd`, rather than inside a Docker container.
+   - This provides direct kernel access to `/proc` and `/sys` for memory (`mem_used_percent`) and disk (`disk_used_percent`) telemetry without requiring elevated container privileges (`--privileged`).
+   - Crucially, running under host `systemd` ensures daemon decoupling: if the Docker daemon crashes or runs out of memory, the CloudWatch Agent stays alive to transmit crash logs and trigger critical alerts.
+2. **Custom Least-Privilege IAM Policy**:
+   - Rather than attaching broad managed policies, the EC2 role uses an explicit custom inline policy (`CloudDeployObservabilityPolicy`).
+   - `cloudwatch:PutMetricData` is strictly conditioned on `cloudwatch:namespace` to allow only `CWAgent` and `CloudDeploy/Application`.
+   - CloudWatch Logs actions (`CreateLogStream`, `PutLogEvents`) are scoped strictly to `/clouddeploy/*`.
+   - Zero `AdministratorAccess` and zero access to database credentials or application S3 data.
+3. **Controlled Metric Cardinality & Free Tier Optimization**:
+   - CloudDeploy distinguishes between standard free EC2 metrics (`CPUUtilization`, `StatusCheckFailed`) and custom metrics.
+   - Custom metrics are capped strictly to three high-value indicators: `mem_used_percent`, `disk_used_percent`, and `HealthCheckStatus`.
+   - Dimensions are strictly minimal (`InstanceId`, `Environment`), completely avoiding high-cardinality request or user IDs.
+   - This keeps metric and alarm quantities within currently documented AWS Free Tier allowances when the account qualifies.
+4. **Heartbeat Failure Detection (`TreatMissingData: breaching`)**:
+   - The synthetic health probe runs every 60 seconds via local cron, publishing `HealthCheckStatus` (1 = UP, 0 = DOWN) to CloudWatch.
+   - For `ApplicationHealthAlarm`, `TreatMissingData` is explicitly set to `breaching`. If the EC2 host freezes, panics, or terminates, the cron script cannot run to publish a 0. Treating missing data as breaching guarantees that total host failure immediately triggers an incident alarm rather than remaining silent.
+5. **Two-Tier Log Retention & Host Rotation**:
+   - On the host, `/etc/logrotate.d/clouddeploy` rotates container logs daily, keeps 7 compressed archives, and uses `copytruncate` to protect the root EBS volume from filling up.
+   - In AWS, all five CloudWatch Log Groups enforce `RetentionInDays: 14` via CloudFormation, preventing unbounded cloud storage costs.
+
+
 
 

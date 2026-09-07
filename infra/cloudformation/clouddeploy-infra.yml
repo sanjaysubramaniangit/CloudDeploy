@@ -405,6 +405,37 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
                 Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EnvironmentName}-*"
+        # Least-privilege custom CloudWatch Observability policy
+        - PolicyName: CloudDeployObservabilityPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Scoped PutMetricData restricted to specific custom metric namespaces
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace:
+                      - CWAgent
+                      - CloudDeploy/Application
+              # EC2 volume and tag description required by CloudWatch Agent disk metrics
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeTags
+                Resource: "*"
+              # Scoped log streaming strictly to /clouddeploy/* log groups
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clouddeploy/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/clouddeploy/*:log-stream:*"
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-ec2-role"
@@ -471,11 +502,128 @@ Resources:
           curl -SL "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64" -o $DOCKER_CONFIG/docker-compose
           chmod +x $DOCKER_CONFIG/docker-compose
 
-          # 5. Create application directory
+          # 5. Create application and log directory structure
           mkdir -p /opt/clouddeploy/scripts
+          mkdir -p /opt/clouddeploy/logs/backend
+          mkdir -p /opt/clouddeploy/logs/nginx
           chown -R ec2-user:ec2-user /opt/clouddeploy
+          # Ensure Spring Boot non-root appuser (UID 1001) can write to mounted logs
+          chown -R 1001:1001 /opt/clouddeploy/logs/backend
+          chmod -R 775 /opt/clouddeploy/logs
 
-          # 6. Save environment template with non-sensitive placeholders
+          # 6. Configure local log rotation to protect root EBS volume
+          cat << 'EOF' > /etc/logrotate.d/clouddeploy
+          /opt/clouddeploy/logs/*/*.log /opt/clouddeploy/logs/*.log {
+              daily
+              rotate 7
+              missingok
+              notifempty
+              compress
+              delaycompress
+              copytruncate
+          }
+          EOF
+          chmod 644 /etc/logrotate.d/clouddeploy
+
+          # 7. Install and start Amazon CloudWatch Agent
+          dnf install -y amazon-cloudwatch-agent
+          mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+
+          cat << 'EOF' > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          {
+            "agent": {
+              "metrics_collection_interval": 60,
+              "run_as_user": "root"
+            },
+            "metrics": {
+              "namespace": "CWAgent",
+              "metrics_collected": {
+                "mem": {
+                  "measurement": ["mem_used_percent"],
+                  "metrics_collection_interval": 60
+                },
+                "disk": {
+                  "measurement": ["disk_used_percent"],
+                  "metrics_collection_interval": 60,
+                  "resources": ["/"]
+                }
+              },
+              "append_dimensions": {
+                "InstanceId": "${aws:InstanceId}"
+              }
+            },
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/opt/clouddeploy/logs/backend/app.log",
+                      "log_group_name": "/clouddeploy/backend",
+                      "log_stream_name": "{instance_id}",
+                      "timestamp_format": "%Y-%m-%d %H:%M:%S.%f"
+                    },
+                    {
+                      "file_path": "/opt/clouddeploy/logs/nginx/access.log",
+                      "log_group_name": "/clouddeploy/nginx-access",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/opt/clouddeploy/logs/nginx/error.log",
+                      "log_group_name": "/clouddeploy/nginx-error",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/opt/clouddeploy/logs/deploy.log",
+                      "log_group_name": "/clouddeploy/deployment",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/messages",
+                      "log_group_name": "/clouddeploy/system",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOF
+
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          systemctl enable amazon-cloudwatch-agent
+
+          # 8. Setup synthetic health check metric cron (queries /api/health every 60s)
+          mkdir -p /opt/clouddeploy/infra/scripts
+          cat << 'EOF' > /opt/clouddeploy/infra/scripts/health-check-metric.sh
+          #!/bin/bash
+          set -euo pipefail
+          set +x
+          AWS_REGION="${AWS::Region}"
+          ENV_NAME="${EnvironmentName}"
+          HEALTH_ENDPOINT="http://127.0.0.1:80/api/health"
+
+          STATUS_VAL=0
+          if HEALTH_RESP=$(wget -qO- --timeout=5 "$HEALTH_ENDPOINT" 2>/dev/null); then
+              if echo "$HEALTH_RESP" | grep -q '"status":"UP"'; then
+                  STATUS_VAL=1
+              fi
+          fi
+
+          aws cloudwatch put-metric-data \
+              --namespace "CloudDeploy/Application" \
+              --metric-name "HealthCheckStatus" \
+              --value "$STATUS_VAL" \
+              --unit "Count" \
+              --dimensions Environment="$ENV_NAME" \
+              --region "$AWS_REGION" > /dev/null 2>&1 || true
+          EOF
+          chmod 755 /opt/clouddeploy/infra/scripts/health-check-metric.sh
+
+          CRON_JOB="* * * * * /opt/clouddeploy/infra/scripts/health-check-metric.sh >/dev/null 2>&1"
+          (crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab -
+
+          # 9. Save environment template with non-sensitive placeholders
           cat << 'EOF' > /opt/clouddeploy/scripts/fetch-secrets.sh
           #!/bin/bash
           set -e
@@ -525,7 +673,130 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub "${EnvironmentName}-ec2-app"
+          Value: !Sub "${EnvironmentName}-ec2-host"
+
+  # ----------------------------------------------------------------------------
+  # 9. CloudWatch Logs: Log Groups with 14-Day Retention
+  # ----------------------------------------------------------------------------
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clouddeploy/backend
+      RetentionInDays: 14
+
+  NginxAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clouddeploy/nginx-access
+      RetentionInDays: 14
+
+  NginxErrorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clouddeploy/nginx-error
+      RetentionInDays: 14
+
+  DeploymentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clouddeploy/deployment
+      RetentionInDays: 14
+
+  SystemLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /clouddeploy/system
+      RetentionInDays: 14
+
+  # ----------------------------------------------------------------------------
+  # 10. CloudWatch Alarms: Operational Health & Infrastructure Thresholds
+  # ----------------------------------------------------------------------------
+  EC2StatusCheckFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-EC2-StatusCheckFailed"
+      AlarmDescription: "Critical: EC2 system or instance status check failed for 2 consecutive minutes."
+      Namespace: "AWS/EC2"
+      MetricName: "StatusCheckFailed"
+      Statistic: "Maximum"
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: "GreaterThanThreshold"
+      TreatMissingData: "missing"
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2Instance
+
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-HighMemoryUtilization"
+      AlarmDescription: "Warning: EC2 memory utilization exceeded 85% for 10 minutes."
+      Namespace: "CWAgent"
+      MetricName: "mem_used_percent"
+      Statistic: "Average"
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      TreatMissingData: "missing"
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2Instance
+
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-HighCPUUtilization"
+      AlarmDescription: "Warning: EC2 CPU utilization exceeded 80% for 10 minutes."
+      Namespace: "AWS/EC2"
+      MetricName: "CPUUtilization"
+      Statistic: "Average"
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      TreatMissingData: "missing"
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2Instance
+
+  LowDiskSpaceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-LowDiskSpace"
+      AlarmDescription: "Warning: EC2 root volume disk usage exceeded 85%."
+      Namespace: "CWAgent"
+      MetricName: "disk_used_percent"
+      Statistic: "Average"
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 85
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      TreatMissingData: "missing"
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2Instance
+        - Name: path
+          Value: "/"
+
+  ApplicationHealthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-ApplicationHealthFailure"
+      AlarmDescription: "Critical: Application health check failed or host unresponsive for 2 consecutive minutes."
+      Namespace: "CloudDeploy/Application"
+      MetricName: "HealthCheckStatus"
+      Statistic: "Minimum"
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: "LessThanThreshold"
+      TreatMissingData: "breaching"
+      Dimensions:
+        - Name: Environment
+          Value: !Ref EnvironmentName
 
 # ==============================================================================
 # Outputs (Zero secrets exposed)
@@ -558,3 +829,4 @@ Outputs:
   SSMSessionCommand:
     Description: AWS CLI command to connect to EC2 via AWS Systems Manager Session Manager (keyless, portless)
     Value: !Sub "aws ssm start-session --target ${EC2Instance} --region ${AWS::Region}"
+
