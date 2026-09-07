@@ -143,3 +143,32 @@ This guide prepares you to explain the technical architecture, design trade-offs
    - If the AI call fails, an `AIInteraction` failure record is committed immediately for observability.
    - If the AI call succeeds, the session update, user message, assistant response, and `AIInteraction` success record are committed atomically in a single transaction.
 
+---
+
+## 10. AWS Cloud Architecture, Security Invariants, and Cost-Conscious Infrastructure Design (Phase 10)
+
+### Question: How did you design the AWS cloud infrastructure for CloudDeploy AI, and how did you address network isolation, secret management, and cost optimization?
+**Talking Points:**
+1. **Multi-Tier Subnet Isolation**:
+   - The architecture partitions the VPC (`10.0.0.0/16`) into public subnets (`10.0.1.0/24`, `10.0.2.0/24`) and private subnets (`10.0.11.0/24`, `10.0.12.0/24`) across 2 Availability Zones.
+   - The compute tier (EC2) is placed in the public subnet, while the database tier (AWS RDS MySQL 8.0) is placed in the private subnets with `PubliclyAccessible: false`.
+2. **Security Group Ingress Chains**:
+   - RDS Security Group permits inbound MySQL (Port 3306) traffic **exclusively from the EC2 Security Group**. There is zero route or rule allowing public database ingress.
+   - The EC2 Security Group exposes only Port 80 (HTTP) to the public Internet for Nginx frontend traffic.
+3. **Keyless Administration (No SSH Ingress)**:
+   - Instead of opening TCP port 22 or deploying an expensive bastion jump host, administration is conducted keylessly through **AWS Systems Manager (SSM) Session Manager** via `AmazonSSMManagedInstanceCore`.
+4. **IMDSv2 & Zero Static AWS Credentials**:
+   - The EC2 instance requires IMDSv2 (`HttpTokens: required`, `HttpPutResponseHopLimit: 2`).
+   - The Spring Boot backend uses AWS SDK v2 `DefaultCredentialsProvider`, which retrieves rotating temporary credentials directly from the EC2 Instance Profile across the Docker bridge. No AWS access keys are written to disk or baked into container images.
+5. **Runtime Secret Management via AWS Systems Manager Parameter Store**:
+   - Production secrets (`JWT_SECRET`, `MYSQL_PASSWORD`, `AI_API_KEY`) are stored as SSM `SecureString` parameters under `/clouddeploy/*`.
+   - The EC2 instance IAM role is granted least-privilege read access strictly to `/clouddeploy/*`.
+   - The host bootstrap script pulls these parameters into `/opt/clouddeploy/.env` with strict `chmod 600` permissions at runtime.
+6. **NAT Gateway Cost Avoidance & S3 Gateway Endpoint**:
+   - A managed NAT Gateway incurs ~$32+/month plus data transfer fees.
+   - By placing the EC2 instance in the public subnet and using an **AWS S3 VPC Gateway Endpoint** (which is 100% free of charge and routes privately), the architecture avoids NAT Gateway fees entirely while keeping the RDS database private.
+7. **S3 Bucket & Database Lifecycle Protection**:
+   - The CloudFormation-managed S3 bucket has Block Public Access enabled, SSE-S3 AES256 encryption, and `DeletionPolicy: Retain`.
+   - RDS MySQL has automated daily backups (`BackupRetentionPeriod: 7`) and `DeletionPolicy: Snapshot` to ensure data preservation before stack teardown.
+
+

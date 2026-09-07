@@ -1,0 +1,545 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudDeploy AI — Production Multi-Tier AWS Infrastructure.
+  Provisions an isolated VPC with 2 public and 2 private subnets across 2 AZs,
+  an Internet Gateway, free S3 VPC Gateway Endpoint (avoiding NAT Gateway charges),
+  private RDS MySQL 8.0, least-privilege IAM Instance Profile with IMDSv2,
+  CloudFormation-managed private S3 bucket, and an EC2 application host.
+
+# ==============================================================================
+# Parameters
+# ==============================================================================
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: clouddeploy
+    Description: Environment name prefix for resource naming and tagging.
+
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: IP range (CIDR notation) for the isolated VPC.
+
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: IP range for Public Subnet 1 in Availability Zone A.
+
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: IP range for Public Subnet 2 in Availability Zone B.
+
+  PrivateSubnet1CIDR:
+    Type: String
+    Default: 10.0.11.0/24
+    Description: IP range for Private Subnet 1 in Availability Zone A (Database tier).
+
+  PrivateSubnet2CIDR:
+    Type: String
+    Default: 10.0.12.0/24
+    Description: IP range for Private Subnet 2 in Availability Zone B (Database tier).
+
+  EC2InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+      - t3.micro
+      - t2.micro
+    Description: >
+      EC2 instance type. t3.small (2 GiB RAM) is recommended for demo stability.
+      t3.micro (1 GiB RAM) is supported as a constrained low-cost configuration.
+
+  RDSInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t4g.micro
+    Description: RDS DB instance class for MySQL.
+
+  DBUsername:
+    Type: String
+    Default: clouddeploy
+    Description: Master username for the RDS MySQL instance.
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    Description: Master password for the RDS MySQL instance (NoEcho enabled).
+
+  EnableSSH:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Whether to open TCP port 22 for SSH. Default is false (SSM Session Manager
+      is the primary, keyless administration method).
+
+  AdminIP:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: >
+      Allowed CIDR block for SSH access (evaluated only if EnableSSH is true).
+      Recommended: Your specific public IP (e.g. 203.0.113.50/32).
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Automatically resolves the latest Amazon Linux 2023 AMI for x86_64.
+
+# ==============================================================================
+# Conditions
+# ==============================================================================
+Conditions:
+  IsSSHEnabled: !Equals [!Ref EnableSSH, "true"]
+
+# ==============================================================================
+# Resources
+# ==============================================================================
+Resources:
+
+  # ----------------------------------------------------------------------------
+  # 1. Networking: VPC, Internet Gateway & Subnets
+  # ----------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-igw"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-subnet-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-subnet-2"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-subnet-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-subnet-2"
+
+  # ----------------------------------------------------------------------------
+  # 2. Route Tables & Associations
+  # ----------------------------------------------------------------------------
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-rt"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-rt"
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ----------------------------------------------------------------------------
+  # 3. AWS S3 VPC Gateway Endpoint (Free of charge; avoids NAT Gateway)
+  # ----------------------------------------------------------------------------
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+
+  # ----------------------------------------------------------------------------
+  # 4. S3 Storage: Private Bucket with DeletionPolicy Retain
+  # ----------------------------------------------------------------------------
+  ApplicationS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-storage-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-storage"
+
+  # ----------------------------------------------------------------------------
+  # 5. Security Groups: Principle of Least Privilege
+  # ----------------------------------------------------------------------------
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for CloudDeploy EC2 application host
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Port 80 HTTP for Nginx frontend / reverse proxy ingress
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow public HTTP web ingress to Nginx
+        # Optional Port 22 SSH (disabled by default)
+        - !If
+          - IsSSHEnabled
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: !Ref AdminIP
+            Description: Optional restricted SSH ingress
+          - !Ref "AWS::NoValue"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic for packages, S3, OpenAI, and RDS
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ec2-sg"
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for CloudDeploy RDS MySQL (internal only)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Inbound Port 3306 ONLY from EC2 Security Group
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Allow MySQL access strictly from EC2 application host
+      SecurityGroupEgress: []
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-rds-sg"
+
+  # ----------------------------------------------------------------------------
+  # 6. Database Tier: RDS DB Subnet Group & MySQL 8.0 Instance
+  # ----------------------------------------------------------------------------
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private DB Subnet Group spanning 2 AZs for CloudDeploy RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-db-subnet-group"
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${EnvironmentName}-mysql"
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: !Ref RDSInstanceClass
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: clouddeploy
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-rds-mysql"
+
+  # ----------------------------------------------------------------------------
+  # 7. IAM Role, Least-Privilege Policies & Instance Profile
+  # ----------------------------------------------------------------------------
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-ec2-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Enables keyless, audited AWS Systems Manager Session Manager access
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        # Least-privilege S3 access strictly scoped to the application bucket
+        - PolicyName: CloudDeployS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt ApplicationS3Bucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${ApplicationS3Bucket.Arn}/*"
+        # Least-privilege SSM Parameter Store read access strictly scoped to /clouddeploy/*
+        - PolicyName: CloudDeploySSMParameterRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/clouddeploy/*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ec2-role"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${EnvironmentName}-ec2-profile-${AWS::Region}"
+      Roles:
+        - !Ref EC2Role
+
+  # ----------------------------------------------------------------------------
+  # 8. Compute Tier: EC2 Application Host
+  # ----------------------------------------------------------------------------
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - RDSInstance
+      - VPCGatewayAttachment
+    Properties:
+      InstanceType: !Ref EC2InstanceType
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      # IMDSv2 strictly required; hop limit 2 for Docker container bridge network access
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+        HttpEndpoint: enabled
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # 1. Update OS packages
+          dnf update -y
+
+          # 2. Configure supplemental 2 GiB swap file
+          if [ ! -f /swapfile ]; then
+            fallocate -l 2G /swapfile
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+          fi
+
+          # 3. Install Docker
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          # 4. Install Docker Compose plugin
+          DOCKER_CONFIG=/usr/local/lib/docker/cli-plugins
+          mkdir -p $DOCKER_CONFIG
+          curl -SL "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64" -o $DOCKER_CONFIG/docker-compose
+          chmod +x $DOCKER_CONFIG/docker-compose
+
+          # 5. Create application directory
+          mkdir -p /opt/clouddeploy/scripts
+          chown -R ec2-user:ec2-user /opt/clouddeploy
+
+          # 6. Save environment template with non-sensitive placeholders
+          cat << 'EOF' > /opt/clouddeploy/scripts/fetch-secrets.sh
+          #!/bin/bash
+          set -e
+
+          # Fetch secrets securely from AWS Systems Manager Parameter Store
+          REGION="${AWS::Region}"
+          RDS_HOST="${RDSInstance.Endpoint.Address}"
+          S3_BUCKET="${ApplicationS3Bucket}"
+
+          echo "Fetching CloudDeploy runtime secrets from SSM Parameter Store..."
+          
+          # Retrieve parameters without printing values
+          DB_PASS=$(aws ssm get-parameter --name "/clouddeploy/db_password" --with-decryption --region "$REGION" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          JWT_SEC=$(aws ssm get-parameter --name "/clouddeploy/jwt_secret" --with-decryption --region "$REGION" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          AI_KEY=$(aws ssm get-parameter --name "/clouddeploy/ai_api_key" --with-decryption --region "$REGION" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
+          # Write runtime .env file with strict permissions
+          ENV_FILE="/opt/clouddeploy/.env"
+          touch "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+
+          cat << ENV_CONTENT > "$ENV_FILE"
+          DB_HOST=$RDS_HOST
+          DB_PORT=3306
+          DB_NAME=clouddeploy
+          DB_USERNAME=${DBUsername}
+          DB_PASSWORD=$DB_PASS
+          DB_DIALECT=org.hibernate.dialect.MySQLDialect
+          JWT_SECRET=$JWT_SEC
+          JWT_EXPIRATION=86400000
+          AWS_REGION=$REGION
+          AWS_S3_BUCKET=$S3_BUCKET
+          AWS_S3_URL_DURATION=15
+          AI_PROVIDER=openai
+          AI_API_KEY=$AI_KEY
+          AI_MODEL=gpt-4o-mini
+          AI_BASE_URL=https://api.openai.com/v1
+          AI_TIMEOUT_SECONDS=30
+          ENV_CONTENT
+
+          chmod 600 "$ENV_FILE"
+          echo "Runtime environment generated successfully at $ENV_FILE (permissions: 600)."
+          EOF
+
+          chmod 700 /opt/clouddeploy/scripts/fetch-secrets.sh
+          chown ec2-user:ec2-user /opt/clouddeploy/scripts/fetch-secrets.sh
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ec2-app"
+
+# ==============================================================================
+# Outputs (Zero secrets exposed)
+# ==============================================================================
+Outputs:
+  VpcId:
+    Description: VPC Identifier
+    Value: !Ref VPC
+
+  EC2PublicIP:
+    Description: Public IPv4 address of the EC2 application host
+    Value: !GetAtt EC2Instance.PublicIp
+
+  EC2PublicDNS:
+    Description: Public DNS name of the EC2 application host
+    Value: !GetAtt EC2Instance.PublicDnsName
+
+  RDSEndpoint:
+    Description: Private DNS address of the RDS MySQL instance (Internal to VPC only)
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RDSPort:
+    Description: Port of the RDS MySQL instance
+    Value: !GetAtt RDSInstance.Endpoint.Port
+
+  S3BucketName:
+    Description: CloudFormation-managed private S3 bucket name
+    Value: !Ref ApplicationS3Bucket
+
+  SSMSessionCommand:
+    Description: AWS CLI command to connect to EC2 via AWS Systems Manager Session Manager (keyless, portless)
+    Value: !Sub "aws ssm start-session --target ${EC2Instance} --region ${AWS::Region}"

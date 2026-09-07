@@ -5,11 +5,22 @@ CloudDeploy AI is a production-oriented cloud engineering and deployment managem
 
 ---
 
-## Current Status: Phase 9 Complete
-The platform has completed **Phase 9: Production Docker & Deployment Packaging**.
+## Current Status: Phase 10 Complete
+The platform has completed **Phase 10: AWS Cloud Infrastructure**.
 
-### Key Capabilities Across Phases 1–9
-1. **Production Docker Packaging & Compose Orchestration**:
+### Key Capabilities Across Phases 1–10
+1. **AWS Cloud Infrastructure as Code (CloudFormation)**:
+   - Declarative multi-tier AWS CloudFormation template (`infra/cloudformation/clouddeploy-infra.yml`) establishing a production-grade VPC (`10.0.0.0/16`) across 2 Availability Zones (`us-east-1a`, `us-east-1b`).
+   - Network isolation: 2 public subnets for compute ingress and 2 private isolated subnets strictly for RDS MySQL 8.0 (`PubliclyAccessible: false`).
+   - Cost-optimized architectural design: Free AWS S3 VPC Gateway Endpoint (`com.amazonaws.us-east-1.s3`) routing private S3 traffic directly over AWS internal network, saving ~$32+/month by eliminating NAT Gateway requirements.
+   - Defensive Security Groups: `clouddeploy-ec2-sg` allowing port 80 public ingress (port 22 closed by default), and `clouddeploy-rds-sg` permitting port 3306 exclusively from the EC2 security group.
+   - CloudFormation-managed S3 bucket (`ApplicationS3Bucket`) with default Block Public Access, SSE-S3 AES256 server-side encryption, and `DeletionPolicy: Retain`.
+   - RDS MySQL 8.0 instance with 7-day automated backups and `DeletionPolicy: Snapshot`.
+   - IAM least-privilege EC2 role with scoped S3 bucket actions, scoped SSM Parameter Store read access (`/clouddeploy/*`), and `AmazonSSMManagedInstanceCore` for secure keyless SSH-less host administration via AWS Systems Manager.
+   - Hardened IMDSv2 enforcement (`HttpTokens: required`, `HttpPutResponseHopLimit: 2`) enabling containerized workloads on Docker bridge network to securely resolve IAM role credentials.
+   - Production Docker Compose overlay (`docker-compose.prod.yml`) connecting containerized frontend and backend directly to managed RDS MySQL.
+   - Runtime secret management script (`infra/scripts/fetch-secrets.sh`) pulling credentials securely from SSM Parameter Store into `/opt/clouddeploy/.env` (`chmod 600`) without baking secrets into Docker images.
+2. **Production Docker Packaging & Compose Orchestration**:
    - Multi-stage production `Dockerfile` for Spring Boot backend (Eclipse Temurin JRE 17, non-root user `appuser` UID 1001, container JVM optimization, BusyBox `wget` healthcheck).
    - Multi-stage production `Dockerfile` for React frontend (`node:18-alpine` builder + `nginx:1.25-alpine` runtime).
    - Production Nginx configuration with client-side SPA routing fallback (`try_files $uri $uri/ /index.html`), `/api/` reverse proxy pass to backend with 12MB multipart upload limit, gzip compression, and defensive security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`).
@@ -157,6 +168,25 @@ docker compose ps
 The application will be accessible at `http://localhost/` (sole host ingress on port 80).
 See [Production Docker Deployment Guide](docs/DOCKER_DEPLOYMENT.md) for full operational details.
 
+### 6. AWS Cloud Deployment (CloudFormation)
+For real AWS infrastructure deployment:
+1. Review the architecture and parameter requirements in [AWS Cloud Infrastructure Guide](docs/AWS_INFRASTRUCTURE.md).
+2. Store runtime secrets securely in AWS SSM Parameter Store as `SecureString` types (`/clouddeploy/jwt_secret`, `/clouddeploy/db_password`, `/clouddeploy/ai_api_key`).
+3. Deploy the CloudFormation template:
+```bash
+aws cloudformation deploy \
+  --template-file infra/cloudformation/clouddeploy-infra.yml \
+  --stack-name clouddeploy-prod \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+      DBPassword="YourSecureMasterPassword123!"
+```
+4. Access EC2 keylessly via AWS SSM Session Manager (`aws ssm start-session --target <instance-id>`).
+5. Run `/opt/clouddeploy/infra/scripts/fetch-secrets.sh` to generate the secure runtime `.env` file (`chmod 600`), then launch the production overlay:
+```bash
+cd /opt/clouddeploy && docker compose -f docker-compose.prod.yml up -d
+```
+
 ---
 
 ## API Summary
@@ -207,6 +237,7 @@ See [Production Docker Deployment Guide](docs/DOCKER_DEPLOYMENT.md) for full ope
 ---
 
 ## Architecture & Security Documentation
+- [AWS Cloud Infrastructure Architecture](docs/AWS_INFRASTRUCTURE.md)
 - [Production Docker Deployment Guide](docs/DOCKER_DEPLOYMENT.md)
 - [AI Cloud Troubleshooting Assistant Specification](docs/TROUBLESHOOTING_ASSISTANT.md)
 - [AI Interview Preparation Specification](docs/INTERVIEW_PREPARATION.md)
