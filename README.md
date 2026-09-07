@@ -5,11 +5,18 @@ CloudDeploy AI is a production-oriented cloud engineering and deployment managem
 
 ---
 
-## Current Status: Phase 7 Complete
-The platform has completed **Phase 7: AI Interview Preparation**.
+## Current Status: Phase 8 Complete
+The platform has completed **Phase 8: AI Cloud Troubleshooting Assistant**.
 
-### Key Capabilities Across Phases 1–7
-1. **AI Interview Preparation**:
+### Key Capabilities Across Phases 1–8
+1. **AI Cloud Troubleshooting Assistant**:
+   - AI-powered, context-aware cloud troubleshooting assistant grounded strictly in stored application/deployment metadata and user-provided diagnostic logs.
+   - Truthful operational boundaries: explicitly does not claim live connections to AWS CloudWatch, Kubernetes daemons, or EC2 APIs.
+   - Command safety: suggested CLI commands are generated as advisory display-only text and never executed by the backend.
+   - Multi-tenant security: enforces application and deployment ownership, verifies deployment-application relationship, and locks session context across subsequent chat turns.
+   - Sensitive credential scrubbing: user queries and log snippets are automatically sanitized for AWS keys, bearer tokens, passwords, and private keys.
+   - Dedicated SaaS interface at `/assistant` (with alias `/cloud-assistant`) featuring context selector bar, 5 quick diagnostic starters, chat feed with severity badges (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`), root cause callouts, remediation steps, and copyable advisory commands.
+2. **AI Interview Preparation**:
    - Synthesizes 10 structured, personalized technical interview questions grounded in the candidate's analyzed resume, a target job description, and deterministic skill-gap analysis.
    - Server-authoritative difficulty enforcement (`BEGINNER`, `INTERMEDIATE`, `ADVANCED`).
    - Standardized 13-category taxonomic classification (`JAVA`, `DSA`, `SPRING_BOOT`, `REST_APIS`, `SQL`, `AWS`, `DOCKER`, `LINUX`, `DEVOPS`, `AI`, `CLOUD_SECURITY`, `BEHAVIORAL`, `PROJECT_SPECIFIC`).
@@ -63,7 +70,7 @@ The platform has completed **Phase 7: AI Interview Preparation**.
 - **Database**: MySQL (Production/Local via Env Vars), H2 (In-Memory for Isolated Integration Tests)
 - **Object Storage**: AWS S3 (via official AWS SDK v2, DefaultCredentialsProvider, S3Presigner)
 - **AI & NLP**: Provider-independent `AIProvider` (OpenAI-compatible REST LLM, MockAIProvider), Apache PDFBox, Apache POI OOXML
-- **Testing**: JUnit 5, Spring MockMvc, Mockito, Maven Surefire (106 automated integration tests across 6 test suites)
+- **Testing**: JUnit 5, Spring MockMvc, Mockito, Maven Surefire (126 automated integration tests across 7 test suites)
 
 ---
 
@@ -105,7 +112,7 @@ AI_BASE_URL=https://api.openai.com/v1
 ```bash
 cd CloudDeploy/backend
 
-# Run complete integration test suite (106 tests)
+# Run complete integration test suite (126 tests)
 mvn clean test
 
 # Start the Spring Boot backend
@@ -170,14 +177,20 @@ Frontend will be accessible at `http://localhost:5173`.
 | `GET` | `/api/ai/interview` | Authenticated | List lightweight interview session summaries |
 | `GET` | `/api/ai/interview/{id}` | Authenticated | Retrieve full interview session with questions |
 | `DELETE` | `/api/ai/interview/{id}` | Authenticated | Delete interview session & cascade questions |
+| `POST` | `/api/ai/assistant/chat` | Authenticated | Send troubleshooting prompt & receive analysis |
+| `GET` | `/api/ai/assistant/sessions` | Authenticated | List lightweight troubleshooting sessions |
+| `GET` | `/api/ai/assistant/sessions/{id}` | Authenticated | Retrieve full troubleshooting session thread |
+| `DELETE` | `/api/ai/assistant/sessions/{id}` | Authenticated | Delete troubleshooting session & cascade messages |
 
 ---
 
 ## Architecture & Security Documentation
+- [AI Cloud Troubleshooting Assistant Specification](docs/TROUBLESHOOTING_ASSISTANT.md)
 - [AI Interview Preparation Specification](docs/INTERVIEW_PREPARATION.md)
 - [Job Matching & Scoring Specification](docs/JOB_MATCHING.md)
 - [AI Architecture Guide](docs/AI_ARCHITECTURE.md)
 - [AI Security & Privacy Policy](docs/AI_SECURITY.md)
 - [S3 Storage Architecture](docs/S3_STORAGE.md)
 - [Technical Interview Guide](docs/INTERVIEW_GUIDE.md)
+
 

@@ -70,6 +70,12 @@ public class ApplicationIntegrationTest {
     private com.clouddeploy.repository.JobDescriptionRepository jobDescriptionRepository;
 
     @Autowired
+    private com.clouddeploy.repository.TroubleshootingMessageRepository troubleshootingMessageRepository;
+
+    @Autowired
+    private com.clouddeploy.repository.TroubleshootingSessionRepository troubleshootingSessionRepository;
+
+    @Autowired
     private com.clouddeploy.repository.InterviewQuestionRepository interviewQuestionRepository;
 
     @Autowired
@@ -92,6 +98,8 @@ public class ApplicationIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        troubleshootingMessageRepository.deleteAll();
+        troubleshootingSessionRepository.deleteAll();
         interviewQuestionRepository.deleteAll();
         interviewSessionRepository.deleteAll();
         jobMatchDetailRepository.deleteAll();

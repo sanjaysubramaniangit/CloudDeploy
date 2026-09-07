@@ -13,6 +13,7 @@ import { EditApplication } from './pages/applications/EditApplication';
 import { ResumeAi } from './pages/resume/ResumeAi';
 import { JobMatch } from './pages/jobmatch/JobMatch';
 import { InterviewPrep } from './pages/interview/InterviewPrep';
+import { CloudAssistant } from './pages/assistant/CloudAssistant';
 import './App.css';
 
 function App() {
@@ -37,6 +38,8 @@ function App() {
               <Route path="/jobs" element={<Navigate to="/job-match" replace />} />
               <Route path="/interview-prep" element={<InterviewPrep />} />
               <Route path="/interview" element={<Navigate to="/interview-prep" replace />} />
+              <Route path="/assistant" element={<CloudAssistant />} />
+              <Route path="/cloud-assistant" element={<Navigate to="/assistant" replace />} />
               {/* Fallback for un-implemented authenticated pages */}
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

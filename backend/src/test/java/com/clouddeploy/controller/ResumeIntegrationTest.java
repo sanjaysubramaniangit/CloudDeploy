@@ -86,6 +86,12 @@ public class ResumeIntegrationTest {
     private JobDescriptionRepository jobDescriptionRepository;
 
     @Autowired
+    private TroubleshootingMessageRepository troubleshootingMessageRepository;
+
+    @Autowired
+    private TroubleshootingSessionRepository troubleshootingSessionRepository;
+
+    @Autowired
     private InterviewQuestionRepository interviewQuestionRepository;
 
     @Autowired
@@ -184,6 +190,8 @@ public class ResumeIntegrationTest {
     }
 
     private void cleanDatabases() {
+        troubleshootingMessageRepository.deleteAll();
+        troubleshootingSessionRepository.deleteAll();
         interviewQuestionRepository.deleteAll();
         interviewSessionRepository.deleteAll();
         jobMatchDetailRepository.deleteAll();

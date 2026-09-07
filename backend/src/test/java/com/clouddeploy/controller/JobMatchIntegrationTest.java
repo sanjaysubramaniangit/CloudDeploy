@@ -69,6 +69,12 @@ public class JobMatchIntegrationTest {
     private JobMatchDetailRepository jobMatchDetailRepository;
 
     @Autowired
+    private TroubleshootingMessageRepository troubleshootingMessageRepository;
+
+    @Autowired
+    private TroubleshootingSessionRepository troubleshootingSessionRepository;
+
+    @Autowired
     private InterviewQuestionRepository interviewQuestionRepository;
 
     @Autowired
@@ -189,6 +195,8 @@ public class JobMatchIntegrationTest {
     }
 
     private void cleanDatabases() {
+        troubleshootingMessageRepository.deleteAll();
+        troubleshootingSessionRepository.deleteAll();
         interviewQuestionRepository.deleteAll();
         interviewSessionRepository.deleteAll();
         jobMatchDetailRepository.deleteAll();

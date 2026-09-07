@@ -74,6 +74,12 @@ public class InterviewIntegrationTest {
     private InterviewSessionRepository interviewSessionRepository;
 
     @Autowired
+    private TroubleshootingMessageRepository troubleshootingMessageRepository;
+
+    @Autowired
+    private TroubleshootingSessionRepository troubleshootingSessionRepository;
+
+    @Autowired
     private InterviewQuestionRepository interviewQuestionRepository;
 
     @Autowired
@@ -265,6 +271,8 @@ public class InterviewIntegrationTest {
     }
 
     private void cleanDatabases() {
+        troubleshootingMessageRepository.deleteAll();
+        troubleshootingSessionRepository.deleteAll();
         interviewQuestionRepository.deleteAll();
         interviewSessionRepository.deleteAll();
         jobMatchDetailRepository.deleteAll();

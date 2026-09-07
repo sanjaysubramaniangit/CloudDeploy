@@ -37,7 +37,7 @@ export const Sidebar = () => {
           <MessageSquare size={20} />
           <span>Interview Prep</span>
         </NavLink>
-        <NavLink to="/assistant" className="nav-item">
+        <NavLink to="/assistant" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <Shield size={20} />
           <span>Cloud Assistant</span>
         </NavLink>

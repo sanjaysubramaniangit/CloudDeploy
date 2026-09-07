@@ -200,7 +200,25 @@ For complete API documentation, prompt design, and database schema, see [INTERVI
 
 ---
 
-## 6. Graceful Degradation & Default Configuration Summary
+## 6. Feature 4: AI Cloud Troubleshooting Assistant (Phase 8)
+
+Phase 8 introduces the **AI Cloud Troubleshooting Assistant**, a specialized SRE diagnostic engine designed to help engineers analyze deployment failures, container crashes, ingress issues, and cloud IAM errors.
+
+### 6.1 Architecture & Core Invariants
+- **Metadata Grounding**: Diagnostic guidance is grounded strictly in server-derived application and deployment records (repository URL, version, commit hash, deployment status, error/release message) alongside user-provided diagnostic logs.
+- **Explicit Scope Limitation**: No live AWS CloudWatch, EC2, Kubernetes, Docker, or GitHub API daemons are connected.
+- **Advisory Commands**: Suggested CLI commands are display-only text. The backend never executes shell commands on the host or cloud provider.
+- **Sensitive Data Sanitization**: User-provided queries and logs are scrubbed of API keys, passwords, and private tokens prior to AI invocation.
+- **Strict Command Safety Validation**: Maximum 10 commands per assistant turn, each non-blank and $\le 500$ characters.
+- **Immutable Thread Context**: Context bindings cannot be changed or injected mid-session.
+- **Multi-Tenant Ownership**: Strict ownership isolation across applications, deployments, and sessions. Cross-user access is rejected with HTTP 403.
+- **Controlled 503 Fallback**: When unconfigured, returns HTTP 503 with exact explanatory message. Never generates fake diagnostic outputs.
+
+For complete API documentation, database schema, and SRE prompt details, see [TROUBLESHOOTING_ASSISTANT.md](./TROUBLESHOOTING_ASSISTANT.md).
+
+---
+
+## 7. Graceful Degradation & Default Configuration Summary
 
 Per production security requirements:
 - `ai.provider=${AI_PROVIDER:}` defaults to an empty string.
@@ -211,4 +229,6 @@ Per production security requirements:
 - Calling `/api/ai/job-match` without configuration returns HTTP `200 OK` with full deterministic scoring and a clear fallback notice.
 - Calling `/api/ai/interview/generate` without configuration returns HTTP `503 Service Unavailable` with message:
   `"AI interview generation is unavailable because the AI provider is not configured. Configure the AI provider to generate personalized interview questions."`
+- Calling `/api/ai/assistant/chat` without configuration returns HTTP `503 Service Unavailable` with message:
+  `"AI cloud troubleshooting assistant is unavailable because the AI provider is not configured. Configure the AI provider to enable cloud troubleshooting assistance."`
 - The system **never fabricates or fakes AI data** in production mode.

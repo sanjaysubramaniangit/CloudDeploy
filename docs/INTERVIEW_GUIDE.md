@@ -117,3 +117,29 @@ This guide prepares you to explain the technical architecture, design trade-offs
    - The backend verifies that the candidate resume and target job description belong to the calling user: if User A attempts to generate interview questions using User B's job description, the server rejects the request with HTTP `403 Forbidden`.
 5. **Controlled Fallback Without Fake Questions**:
    - When the AI provider is not configured, the service returns HTTP `503 Service Unavailable` with a clear actionable message, rather than fabricating hardcoded or fake questions.
+
+---
+
+## 9. AI Cloud Troubleshooting Assistant System Design (Phase 8)
+
+### Question: How does the AI Cloud Troubleshooting Assistant work, and how did you address command safety, multi-tenancy, and LLM boundaries?
+**Talking Points:**
+1. **Truthful Grounding Without False Telemetry Claims**:
+   - The assistant explicitly does **not** claim live connections to AWS CloudWatch, Kubernetes daemons, or EC2 APIs.
+   - It is grounded strictly in stored application and deployment metadata (`repositoryUrl`, `version`, `commitHash`, `deploymentStatus`, `deploymentMessage`) combined with user-provided log snippets and stack traces.
+2. **Advisory Text vs. Remote Process Execution (Command Safety)**:
+   - Suggested CLI commands (`kubectl logs`, `journalctl`, `aws s3 ls`) are generated as **display-only text**.
+   - CloudDeploy **never executes** these commands on the host or cloud infrastructure (`Runtime.getRuntime().exec()` and `ProcessBuilder` are forbidden).
+   - Commands are validated against length ($\le 500$ chars) and quantity ($\le 10$) limits before storage, and displayed with copy-to-clipboard functionality and an explicit warning banner.
+3. **Multi-Tenant Ownership & Relationship Integrity**:
+   - The backend validates that the application and deployment belong to the authenticated user.
+   - It also validates that the deployment is actually associated with the specified application (`deployment.getApplication().equals(application)`). Mismatches are rejected with `400 Bad Request`.
+4. **Context Immutability Across Chat Turns**:
+   - Once a troubleshooting thread is created, its context (application and deployment binding) is immutable. Users cannot re-bind or manipulate the target system in subsequent chat turns of that session.
+5. **Sensitive Credential Sanitization**:
+   - Before queries and log snippets are incorporated into the system prompt, they pass through `SensitiveDataFilterService`, automatically scrubbing AWS keys, passwords, bearer tokens, and private keys.
+6. **Separation of Network I/O from Database Transactions**:
+   - The AI network call is decoupled from the transaction boundary.
+   - If the AI call fails, an `AIInteraction` failure record is committed immediately for observability.
+   - If the AI call succeeds, the session update, user message, assistant response, and `AIInteraction` success record are committed atomically in a single transaction.
+
