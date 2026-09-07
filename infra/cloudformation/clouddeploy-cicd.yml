@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudDeploy AI — Phase 11 CI/CD Infrastructure as Code Template.
+  Provisions private Amazon ECR repositories (backend & frontend) with automated
+  vulnerability scanning and lifecycle policies, registers GitHub Actions OIDC provider,
+  and establishes separated least-privilege IAM roles for container build/push and
+  SSM Run Command deployment.
+
+# ==============================================================================
+# Parameters
+# ==============================================================================
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: clouddeploy-prod
+    Description: Environment prefix for CI/CD resources
+
+  GitHubOrg:
+    Type: String
+    Default: your-github-org
+    Description: GitHub organization or username owning the repository
+
+  GitHubRepo:
+    Type: String
+    Default: CloudDeploy
+    Description: GitHub repository name
+
+  EC2TagValue:
+    Type: String
+    Default: clouddeploy-ec2-host
+    Description: Tag:Name value of the EC2 target instance for SSM Run Command scoping
+
+# ==============================================================================
+# Resources
+# ==============================================================================
+Resources:
+  # ----------------------------------------------------------------------------
+  # 1. Amazon ECR Private Repository: Spring Boot Backend
+  # ----------------------------------------------------------------------------
+  BackendECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}-backend"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain the last 10 immutable production images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-backend-ecr"
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ----------------------------------------------------------------------------
+  # 2. Amazon ECR Private Repository: React / Nginx Frontend
+  # ----------------------------------------------------------------------------
+  FrontendECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}-frontend"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain the last 10 immutable production images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-frontend-ecr"
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ----------------------------------------------------------------------------
+  # 3. AWS IAM OpenID Connect (OIDC) Identity Provider for GitHub Actions
+  # ----------------------------------------------------------------------------
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f8d264fcd9
+      Tags:
+        - Key: Name
+          Value: github-actions-oidc-provider
+
+  # ----------------------------------------------------------------------------
+  # 4. GitHub Actions Build & Push IAM Role (BuildRole)
+  # Scoped strictly to ECR authentication and pushing images to CloudDeploy repos.
+  # ZERO access to SSM Run Command, RDS, S3 application bucket, or secrets.
+  # ----------------------------------------------------------------------------
+  GitHubActionsBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-github-build-role-${AWS::Region}"
+      Description: IAM role assumed by GitHub Actions to push Docker images to ECR
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: ECRPushLeastPrivilege
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # GetAuthorizationToken is a service-wide action and requires "*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              # Scoped push permissions strictly to the two application repositories
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource:
+                  - !GetAtt BackendECRRepository.Arn
+                  - !GetAtt FrontendECRRepository.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-github-build-role"
+        - Key: RoleType
+          Value: CI-Build-Push
+
+  # ----------------------------------------------------------------------------
+  # 5. GitHub Actions Production Deploy IAM Role (DeployRole)
+  # Scoped strictly to SSM Run Command targeting the production EC2 host.
+  # ZERO ECR push permissions, ZERO S3 bucket access, ZERO secret read access.
+  # ----------------------------------------------------------------------------
+  GitHubActionsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-github-deploy-role-${AWS::Region}"
+      Description: IAM role assumed by GitHub Actions to trigger SSM Run Command deployment on EC2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:environment:production"
+      Policies:
+        - PolicyName: SSMDeployLeastPrivilege
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Allow executing only AWS-RunShellScript document
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:*:document/AWS-RunShellScript"
+              # Allow targeting only EC2 instances tagged Name=clouddeploy-ec2-host
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Name: !Ref EC2TagValue
+              # Allow polling status and retrieving command invocation output
+              - Effect: Allow
+                Action:
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-github-deploy-role"
+        - Key: RoleType
+          Value: CD-SSM-Deploy
+
+# ==============================================================================
+# Outputs (Zero Secrets Exposed)
+# ==============================================================================
+Outputs:
+  BackendECRRepositoryUri:
+    Description: Amazon ECR repository URI for Spring Boot backend
+    Value: !GetAtt BackendECRRepository.RepositoryUri
+    Export:
+      Name: !Sub "${EnvironmentName}-BackendECRRepositoryUri"
+
+  FrontendECRRepositoryUri:
+    Description: Amazon ECR repository URI for React / Nginx frontend
+    Value: !GetAtt FrontendECRRepository.RepositoryUri
+    Export:
+      Name: !Sub "${EnvironmentName}-FrontendECRRepositoryUri"
+
+  GitHubActionsBuildRoleArn:
+    Description: AWS IAM Role ARN for GitHub Actions image build and ECR push
+    Value: !GetAtt GitHubActionsBuildRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-GitHubActionsBuildRoleArn"
+
+  GitHubActionsDeployRoleArn:
+    Description: AWS IAM Role ARN for GitHub Actions SSM deployment
+    Value: !GetAtt GitHubActionsDeployRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-GitHubActionsDeployRoleArn"

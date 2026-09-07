@@ -5,11 +5,20 @@ CloudDeploy AI is a production-oriented cloud engineering and deployment managem
 
 ---
 
-## Current Status: Phase 10 Complete
-The platform has completed **Phase 10: AWS Cloud Infrastructure**.
+## Current Status: Phase 11 Complete
+The platform has completed **Phase 11: GitHub Actions CI/CD Pipeline**.
 
-### Key Capabilities Across Phases 1–10
-1. **AWS Cloud Infrastructure as Code (CloudFormation)**:
+### Key Capabilities Across Phases 1–11
+1. **GitHub Actions CI/CD & Controlled Deployment with Health-Gated Rollback**:
+   - Automated pull-request validation (`.github/workflows/pr-checks.yml`) running all 126 backend integration tests, Vite frontend production build, and configuration linting with zero AWS credentials.
+   - Production deployment pipeline (`.github/workflows/deploy.yml`) triggered on pushes to `main` with concurrency control (`production-deployment`).
+   - Secure AWS OpenID Connect (OIDC) federation eliminating static AWS access keys from GitHub Secrets.
+   - Strict two-role privilege separation: `GitHubActionsBuildRole` (ECR build/push only) and `GitHubActionsDeployRole` (SSM Run Command only, scoped to GitHub Environment `production`).
+   - Immutable Git SHA deployment: container images tagged and deployed exclusively using full commit SHAs (`${{ github.sha }}`).
+   - Private Amazon ECR repositories (`clouddeploy-backend`, `clouddeploy-frontend`) with scan-on-push and automated lifecycle policy retaining the last 10 images.
+   - Keyless deployment via AWS Systems Manager (SSM) Run Command (`AWS-RunShellScript`) targeting EC2 host `Name=clouddeploy-ec2-host` with zero SSH port 22 access.
+   - Authoritative host deployment script (`infra/scripts/deploy.sh`) orchestrating container rollouts, multi-point health checks (Nginx port 80, backend port 8080, reverse proxy `/api/health`), and automated rollback to previous known-good SHA on failure.
+2. **AWS Cloud Infrastructure as Code (CloudFormation)**:
    - Declarative multi-tier AWS CloudFormation template (`infra/cloudformation/clouddeploy-infra.yml`) establishing a production-grade VPC (`10.0.0.0/16`) across 2 Availability Zones (`us-east-1a`, `us-east-1b`).
    - Network isolation: 2 public subnets for compute ingress and 2 private isolated subnets strictly for RDS MySQL 8.0 (`PubliclyAccessible: false`).
    - Cost-optimized architectural design: Free AWS S3 VPC Gateway Endpoint (`com.amazonaws.us-east-1.s3`) routing private S3 traffic directly over AWS internal network, saving ~$32+/month by eliminating NAT Gateway requirements.
@@ -88,7 +97,7 @@ The platform has completed **Phase 10: AWS Cloud Infrastructure**.
 - **Database**: MySQL (Production/Local via Env Vars), H2 (In-Memory for Isolated Integration Tests)
 - **Object Storage**: AWS S3 (via official AWS SDK v2, DefaultCredentialsProvider, S3Presigner)
 - **AI & NLP**: Provider-independent `AIProvider` (OpenAI-compatible REST LLM, MockAIProvider), Apache PDFBox, Apache POI OOXML
-- **Testing**: JUnit 5, Spring MockMvc, Mockito, Maven Surefire (126 automated integration tests across 7 test suites)
+- **Testing**: JUnit 5, Spring MockMvc, Mockito, Maven Surefire (126 automated integration tests across 8 integration test classes)
 
 ---
 
@@ -237,6 +246,7 @@ cd /opt/clouddeploy && docker compose -f docker-compose.prod.yml up -d
 ---
 
 ## Architecture & Security Documentation
+- [CI/CD Pipeline Architecture & Deployment Runbook](docs/CI_CD_PIPELINE.md)
 - [AWS Cloud Infrastructure Architecture](docs/AWS_INFRASTRUCTURE.md)
 - [Production Docker Deployment Guide](docs/DOCKER_DEPLOYMENT.md)
 - [AI Cloud Troubleshooting Assistant Specification](docs/TROUBLESHOOTING_ASSISTANT.md)

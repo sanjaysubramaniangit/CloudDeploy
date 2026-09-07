@@ -1,0 +1,233 @@
+name: Production Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Ensure only one production deployment executes at any time
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  id-token: write  # Required for AWS OIDC token request
+  contents: read   # Required for code checkout
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ENVIRONMENT_NAME: ${{ vars.ENVIRONMENT_NAME || 'clouddeploy-prod' }}
+  EC2_TAG_VALUE: ${{ vars.EC2_TAG_VALUE || 'clouddeploy-ec2-host' }}
+
+jobs:
+  # ============================================================================
+  # Stage 1: Continuous Integration & Verification Gate
+  # ============================================================================
+  validate:
+    name: Test & Build Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+          cache: "maven"
+
+      - name: Run Complete Backend Test Suite (126 tests)
+        working-directory: backend
+        run: mvn clean test -B
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Compile Frontend Production Distribution
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  # ============================================================================
+  # Stage 2: Build Multi-Stage Docker Images & Push to Amazon ECR
+  # Assumes dedicated GitHubActionsBuildRole via AWS OIDC federation
+  # ============================================================================
+  build-and-push:
+    name: Build & Push Images to ECR
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to AWS via OIDC (BuildRole)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push Spring Boot backend image (immutable SHA + latest)
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT_NAME }}-backend:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT_NAME }}-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build and push React / Nginx frontend image (immutable SHA + latest)
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT_NAME }}-frontend:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT_NAME }}-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================================
+  # Stage 3: Orchestrate EC2 Deployment via AWS Systems Manager Run Command
+  # Uses GitHub Environment 'production' and assumes GitHubActionsDeployRole
+  # ============================================================================
+  deploy:
+    name: Deploy to EC2 via AWS SSM
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Authenticate to AWS via OIDC (DeployRole)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Discover EC2 Production Host
+        id: discover-host
+        run: |
+          echo "Resolving running EC2 instance with tag Name=${EC2_TAG_VALUE} in ${AWS_REGION}..."
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${EC2_TAG_VALUE}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: No running EC2 instance found with tag Name=${EC2_TAG_VALUE}." >&2
+            exit 1
+          fi
+
+          echo "Found target EC2 Instance ID: ${INSTANCE_ID}"
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch Deployment Command via AWS SSM
+        id: ssm-dispatch
+        env:
+          TARGET_INSTANCE_ID: ${{ steps.discover-host.outputs.instance_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          echo "=============================================================================="
+          echo " Dispatching SSM Run Command to instance: ${TARGET_INSTANCE_ID}"
+          echo " Immutable Target Commit SHA:             ${COMMIT_SHA}"
+          echo "=============================================================================="
+
+          COMMAND_ID=$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${TARGET_INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "CloudDeploy AI CI/CD: Release commit ${COMMIT_SHA}" \
+            --parameters "commands=[
+              \"set -euo pipefail\",
+              \"chmod 750 /opt/clouddeploy/infra/scripts/deploy.sh\",
+              \"/opt/clouddeploy/infra/scripts/deploy.sh ${COMMIT_SHA} ${COMMIT_SHA}\"
+            ]" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command dispatched successfully. Command ID: ${COMMAND_ID}"
+          echo "command_id=${COMMAND_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Poll Deployment Status & Capture Execution Output
+        env:
+          COMMAND_ID: ${{ steps.ssm-dispatch.outputs.command_id }}
+          TARGET_INSTANCE_ID: ${{ steps.discover-host.outputs.instance_id }}
+        run: |
+          echo "Polling SSM Command ${COMMAND_ID} on instance ${TARGET_INSTANCE_ID}..."
+          
+          # Poll every 5 seconds for up to 5 minutes (60 attempts)
+          MAX_POLL_ATTEMPTS=60
+          POLL_COUNT=1
+          STATUS="InProgress"
+
+          while [ $POLL_COUNT -le $MAX_POLL_ATTEMPTS ]; do
+            # Small initial wait before querying invocation details
+            sleep 5
+            
+            INVOCATION_JSON=$(aws ssm get-command-invocation \
+              --region "${AWS_REGION}" \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${TARGET_INSTANCE_ID}" \
+              2>/dev/null || true)
+
+            STATUS=$(echo "$INVOCATION_JSON" | grep -o '"Status"[^,]*' | cut -d'"' -f4 || echo "Pending")
+
+            echo "  [Poll ${POLL_COUNT}/${MAX_POLL_ATTEMPTS}] Current deployment status: ${STATUS}"
+
+            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              break
+            fi
+
+            POLL_COUNT=$((POLL_COUNT + 1))
+          done
+
+          echo "=============================================================================="
+          echo " SSM Run Command Final Status: ${STATUS}"
+          echo "=============================================================================="
+
+          # Extract and print stdout and stderr without exposing secrets
+          echo "--- Deployment Standard Output ---"
+          aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${TARGET_INSTANCE_ID}" \
+            --query "StandardOutputContent" \
+            --output text || true
+
+          echo "--- Deployment Standard Error ---"
+          aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${TARGET_INSTANCE_ID}" \
+            --query "StandardErrorContent" \
+            --output text || true
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "ERROR: Deployment failed with status '${STATUS}'. Inspect logs above for rollback details." >&2
+            exit 1
+          fi
+
+          echo "Production deployment of commit ${{ github.sha }} completed successfully!"

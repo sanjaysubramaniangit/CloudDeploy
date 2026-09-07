@@ -171,4 +171,33 @@ This guide prepares you to explain the technical architecture, design trade-offs
    - The CloudFormation-managed S3 bucket has Block Public Access enabled, SSE-S3 AES256 encryption, and `DeletionPolicy: Retain`.
    - RDS MySQL has automated daily backups (`BackupRetentionPeriod: 7`) and `DeletionPolicy: Snapshot` to ensure data preservation before stack teardown.
 
+---
+
+## 11. Enterprise CI/CD Pipelines, GitHub Actions OIDC Federation, and Safe Rollback Architecture (Phase 11)
+
+### Question: How did you design the automated CI/CD pipeline for CloudDeploy AI, and how do you ensure controlled deployments with health-gated rollback and rapid recovery from failed releases?
+**Talking Points:**
+1. **GitHub Actions OIDC Federation (Zero Static AWS Keys)**:
+   - Rather than storing long-lived `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in GitHub repository secrets, the pipeline uses OpenID Connect (OIDC) with AWS STS (`sts:AssumeRoleWithWebIdentity`).
+   - GitHub generates a cryptographically signed JSON Web Token (JWT) that AWS STS exchanges for temporary, short-lived session credentials.
+2. **Two-Role Privilege Separation Model**:
+   - **`GitHubActionsBuildRole`**: Scoped strictly to `repo:<org>/<repo>:ref:refs/heads/main` with permissions limited to pushing images to private Amazon ECR repositories. Has zero access to SSM Run Command, RDS, S3, or secrets.
+   - **`GitHubActionsDeployRole`**: Scoped strictly to the `production` GitHub environment (`repo:<org>/<repo>:environment:production`) with permissions limited to dispatching `ssm:SendCommand` (`AWS-RunShellScript`) targeting EC2 hosts tagged `Name=clouddeploy-ec2-host`. Has zero access to push images to ECR, zero access to application S3 data, and zero access to Parameter Store secrets.
+   - **`EC2Role` (Runtime)**: Retains read-only ECR image pull permissions, runtime secret decryption via Parameter Store, and application S3 storage access. CI/CD roles cannot access runtime secrets.
+3. **Container Registry Architecture (Amazon ECR vs. Local EC2 Builds)**:
+   - Compiling Java 17 / Maven and building Node.js / Vite bundles on a burstable `t3.small` / `t3.micro` EC2 instance risks severe CPU/RAM exhaustion, depletes CPU burst credits, and risks crashing running production containers.
+   - Using Amazon ECR offloads all compilation and image packaging to GitHub Actions runners. EC2 only pulls the pre-built, multi-stage Alpine images.
+   - ECR lifecycle policies automatically retain the last 10 immutable images to cap storage costs.
+   - Same-Region transfer (`us-east-1` to `us-east-1`) incurs $0.00 data transfer charges.
+4. **Keyless SSM Run Command Deployment (No Port 22 / SSH)**:
+   - Deployments are triggered on EC2 keylessly via AWS Systems Manager Run Command (`AWS-RunShellScript`).
+   - SSH Port 22 remains closed in the security group; no SSH keys exist to be leaked, rotated, or managed.
+   - Every deployment invocation and log stream is recorded immutably in AWS Systems Manager.
+5. **Immutable SHA Deployments & Robust Automated Rollback**:
+   - Production deployments strictly use the full Git commit SHA (`backend:<SHA>`, `frontend:<SHA>`), never the mutable `latest` tag.
+   - The authoritative deployment script (`deploy.sh`) records the active SHA in `/opt/clouddeploy/.current_deploy`.
+   - After deploying containers with `docker compose up -d`, the script executes a multi-point health gate polling Port 80 (Nginx) and `/api/health` through the reverse proxy for up to 60 seconds.
+   - If the health gate fails, `deploy.sh` automatically redeploys the previous known-good SHA recorded in `.current_deploy`, verifies rollback health, captures container diagnostic logs to stdout, and exits with a non-zero code to fail the GitHub Actions workflow.
+
+
 

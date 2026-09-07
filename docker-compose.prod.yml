@@ -7,6 +7,7 @@ services:
   # Spring Boot Backend (Internal only — not exposed to host)
   # ----------------------------------------------------------------------------
   backend:
+    image: ${BACKEND_IMAGE:-clouddeploy-backend:latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -42,6 +43,7 @@ services:
   # Frontend & Reverse Proxy (Sole host ingress on port 80)
   # ----------------------------------------------------------------------------
   frontend:
+    image: ${FRONTEND_IMAGE:-clouddeploy-frontend:latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile

@@ -1,0 +1,85 @@
+name: Pull Request Verification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "infra/**"
+      - "docker-compose*.yml"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # 1. Backend Automated Integration Tests (126 tests)
+  # ----------------------------------------------------------------------------
+  backend-tests:
+    name: Backend Tests (Java 17 / JUnit 5)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+          cache: "maven"
+
+      - name: Run Backend Integration Test Suite
+        working-directory: backend
+        run: mvn clean test -B
+
+  # ----------------------------------------------------------------------------
+  # 2. Frontend Production Build Verification (Vite)
+  # ----------------------------------------------------------------------------
+  frontend-build:
+    name: Frontend Build (Node 18 / Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Compile Production Distribution
+        working-directory: frontend
+        run: npm run build
+
+  # ----------------------------------------------------------------------------
+  # 3. Dockerfile & Infrastructure Syntax Validation
+  # ----------------------------------------------------------------------------
+  config-validation:
+    name: Docker & Configuration Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Verify Shell Scripts Syntax
+        run: |
+          bash -n infra/scripts/ec2-user-data.sh
+          bash -n infra/scripts/fetch-secrets.sh
+          bash -n infra/scripts/deploy.sh
+          echo "Shell scripts syntax verified."
+
+      - name: Verify Docker Compose Configurations
+        run: |
+          docker compose config -q
+          JWT_SECRET=dummy MYSQL_PASSWORD=dummy MYSQL_ROOT_PASSWORD=dummy DB_HOST=dummy DB_PASSWORD=dummy AWS_S3_BUCKET=dummy docker compose -f docker-compose.prod.yml config -q
+          echo "Docker Compose configurations verified."
