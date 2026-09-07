@@ -1,0 +1,92 @@
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.deployment-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.deployment-table th {
+  padding: 0.75rem 1rem;
+  background-color: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.deployment-table td {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text-main);
+}
+
+.deployment-row:hover {
+  background-color: #f8fafc;
+}
+
+.version-cell {
+  font-weight: 600;
+}
+
+.version-tag {
+  display: inline-block;
+  font-family: monospace;
+  background-color: #f1f5f9;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+}
+
+.commit-hash-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: monospace;
+  color: #475569;
+  background-color: #f8fafc;
+  border: 1px solid var(--border);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+
+.commit-icon {
+  color: #64748b;
+}
+
+.message-cell {
+  max-width: 280px;
+}
+
+.message-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-cell {
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.date-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.date-icon {
+  color: #94a3b8;
+}

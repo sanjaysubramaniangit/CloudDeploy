@@ -1,0 +1,12 @@
+.env
+node_modules/
+target/
+build/
+dist/
+*.pem
+*.key
+.DS_Store
+.idea/
+.vscode/
+*.class
+*.log

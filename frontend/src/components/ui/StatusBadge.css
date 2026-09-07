@@ -1,0 +1,67 @@
+.status-badge-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: capitalize;
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.status-badge-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge-spin {
+  animation: badgeSpin 1.4s linear infinite;
+}
+
+@keyframes badgeSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Success: Emerald */
+.badge-success-modern {
+  background-color: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+/* Running: Blue */
+.badge-running-modern {
+  background-color: #eff6ff;
+  color: #1e40af;
+  border-color: #bfdbfe;
+}
+
+/* Pending: Amber */
+.badge-pending-modern {
+  background-color: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+/* Failed: Rose / Red */
+.badge-failed-modern {
+  background-color: #fff1f2;
+  color: #9f1239;
+  border-color: #fecdd3;
+}
+
+/* Offline: Slate */
+.badge-offline-modern {
+  background-color: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
+}
