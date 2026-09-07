@@ -197,7 +197,7 @@ git clone https://github.com/your-org/CloudDeploy.git /opt/clouddeploy/app
 cd /opt/clouddeploy/app
 
 # 3. Fetch secrets from SSM Parameter Store into /opt/clouddeploy/.env
-/opt/clouddeploy/scripts/fetch-secrets.sh
+/opt/clouddeploy/infra/scripts/fetch-secrets.sh
 
 # 4. Launch containers using production overlay
 docker compose -f docker-compose.prod.yml up --build -d

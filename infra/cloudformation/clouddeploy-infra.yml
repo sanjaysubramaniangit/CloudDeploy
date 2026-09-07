@@ -503,7 +503,7 @@ Resources:
           chmod +x $DOCKER_CONFIG/docker-compose
 
           # 5. Create application and log directory structure
-          mkdir -p /opt/clouddeploy/scripts
+          mkdir -p /opt/clouddeploy/infra/scripts
           mkdir -p /opt/clouddeploy/logs/backend
           mkdir -p /opt/clouddeploy/logs/nginx
           chown -R ec2-user:ec2-user /opt/clouddeploy
@@ -624,7 +624,7 @@ Resources:
           (crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab -
 
           # 9. Save environment template with non-sensitive placeholders
-          cat << 'EOF' > /opt/clouddeploy/scripts/fetch-secrets.sh
+          cat << 'EOF' > /opt/clouddeploy/infra/scripts/fetch-secrets.sh
           #!/bin/bash
           set -e
 
@@ -668,8 +668,8 @@ Resources:
           echo "Runtime environment generated successfully at $ENV_FILE (permissions: 600)."
           EOF
 
-          chmod 700 /opt/clouddeploy/scripts/fetch-secrets.sh
-          chown ec2-user:ec2-user /opt/clouddeploy/scripts/fetch-secrets.sh
+          chmod 750 /opt/clouddeploy/infra/scripts/fetch-secrets.sh
+          chown ec2-user:ec2-user /opt/clouddeploy/infra/scripts/fetch-secrets.sh
 
       Tags:
         - Key: Name

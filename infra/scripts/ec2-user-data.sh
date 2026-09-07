@@ -42,7 +42,7 @@ chmod +x "${DOCKER_CONFIG_DIR}/docker-compose"
 
 # 5. Create deployment and log directory structure with non-root permissions
 APP_DIR="/opt/clouddeploy"
-mkdir -p "${APP_DIR}/scripts"
+mkdir -p "${APP_DIR}/infra/scripts"
 mkdir -p "${APP_DIR}/logs/backend"
 mkdir -p "${APP_DIR}/logs/nginx"
 chown -R ec2-user:ec2-user "$APP_DIR"
