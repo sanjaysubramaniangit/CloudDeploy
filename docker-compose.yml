@@ -1,0 +1,103 @@
+services:
+  # ============================================================================
+  # MySQL Database (Internal only — not exposed to host for security)
+  # ============================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: clouddeploy-mysql
+    restart: unless-stopped
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: clouddeploy
+      MYSQL_USER: clouddeploy
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be provided}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be provided}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - clouddeploy-net
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u clouddeploy -p$$MYSQL_PASSWORD || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ============================================================================
+  # Spring Boot Backend (Internal only — proxied via Frontend Nginx)
+  # ============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: clouddeploy-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: clouddeploy
+      DB_USERNAME: clouddeploy
+      DB_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be provided}
+      DB_DIALECT: org.hibernate.dialect.MySQLDialect
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_URL_DURATION: ${AWS_S3_URL_DURATION:-15}
+    networks:
+      - clouddeploy-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health | grep -q 'UP' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ============================================================================
+  # Frontend & Reverse Proxy (Sole host ingress on port 80)
+  # ============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: clouddeploy-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    networks:
+      - clouddeploy-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+# ==============================================================================
+# Isolated Internal Network
+# ==============================================================================
+networks:
+  clouddeploy-net:
+    driver: bridge
+
+# ==============================================================================
+# Persistent Named Volumes
+# ==============================================================================
+volumes:
+  mysql_data:
+    driver: local
