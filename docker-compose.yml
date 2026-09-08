@@ -13,14 +13,14 @@ services:
     environment:
       MYSQL_DATABASE: clouddeploy
       MYSQL_USER: clouddeploy
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be provided}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be provided}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be provided}
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - clouddeploy-net
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u clouddeploy -p$$MYSQL_PASSWORD || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u clouddeploy -p$$DB_PASSWORD || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -43,7 +43,7 @@ services:
       DB_PORT: 3306
       DB_NAME: clouddeploy
       DB_USERNAME: clouddeploy
-      DB_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be provided}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be provided}
       DB_DIALECT: org.hibernate.dialect.MySQLDialect
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
@@ -79,11 +79,11 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "80:80"
+      - "80:8080"
     networks:
       - clouddeploy-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ || exit 1"]
       interval: 15s
       timeout: 3s
       retries: 3

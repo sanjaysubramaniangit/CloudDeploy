@@ -14,7 +14,11 @@ export const EmptyState = ({
   return (
     <div className={`empty-state-container ${className}`}>
       <div className="empty-state-icon-wrapper">
-        <Icon size={32} className="empty-state-icon" aria-hidden="true" />
+        {React.isValidElement(Icon) ? (
+          Icon
+        ) : (
+          <Icon size={32} className="empty-state-icon" aria-hidden="true" />
+        )}
       </div>
       <h3 className="empty-state-title">{title}</h3>
       <p className="empty-state-description">{description}</p>

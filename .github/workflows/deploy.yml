@@ -155,6 +155,9 @@ jobs:
           echo " Immutable Target Commit SHA:             ${COMMIT_SHA}"
           echo "=============================================================================="
 
+          DOCKER_COMPOSE_B64=$(base64 -w 0 docker-compose.prod.yml)
+          DEPLOY_SH_B64=$(base64 -w 0 infra/scripts/deploy.sh)
+
           COMMAND_ID=$(aws ssm send-command \
             --region "${AWS_REGION}" \
             --instance-ids "${TARGET_INSTANCE_ID}" \
@@ -162,6 +165,9 @@ jobs:
             --comment "CloudDeploy AI CI/CD: Release commit ${COMMIT_SHA}" \
             --parameters "commands=[
               \"set -euo pipefail\",
+              \"mkdir -p /opt/clouddeploy/infra/scripts\",
+              \"echo '${DOCKER_COMPOSE_B64}' | base64 -d > /opt/clouddeploy/docker-compose.prod.yml\",
+              \"echo '${DEPLOY_SH_B64}' | base64 -d > /opt/clouddeploy/infra/scripts/deploy.sh\",
               \"chmod 750 /opt/clouddeploy/infra/scripts/deploy.sh\",
               \"/opt/clouddeploy/infra/scripts/deploy.sh ${COMMIT_SHA} ${COMMIT_SHA}\"
             ]" \
@@ -187,13 +193,12 @@ jobs:
             # Small initial wait before querying invocation details
             sleep 5
             
-            INVOCATION_JSON=$(aws ssm get-command-invocation \
+            STATUS=$(aws ssm get-command-invocation \
               --region "${AWS_REGION}" \
               --command-id "${COMMAND_ID}" \
               --instance-id "${TARGET_INSTANCE_ID}" \
-              2>/dev/null || true)
-
-            STATUS=$(echo "$INVOCATION_JSON" | grep -o '"Status"[^,]*' | cut -d'"' -f4 || echo "Pending")
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
 
             echo "  [Poll ${POLL_COUNT}/${MAX_POLL_ATTEMPTS}] Current deployment status: ${STATUS}"
 

@@ -20,7 +20,7 @@ export const ToastProvider = ({ children }) => {
       <div className="toast-container">
         {toasts.map(toast => (
           <div key={toast.id} className={`toast toast-${toast.type}`}>
-            {toast.message}
+            {typeof toast.message === 'string' ? toast.message : JSON.stringify(toast.message)}
           </div>
         ))}
       </div>

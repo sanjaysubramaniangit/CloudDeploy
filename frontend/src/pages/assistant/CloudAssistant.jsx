@@ -307,7 +307,7 @@ export const CloudAssistant = () => {
     return (
       <div className="cloud-assistant-page">
         <div style={{ textAlign: 'center', padding: '4rem 1rem' }}>
-          <Spinner size="lg" />
+          <Spinner size={36} />
           <p style={{ marginTop: '1rem', color: '#94a3b8' }}>Loading Cloud Troubleshooting Assistant...</p>
         </div>
       </div>
@@ -636,7 +636,7 @@ export const CloudAssistant = () => {
             {submitting && (
               <div className="message-card-assistant" style={{ opacity: 0.85 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <Spinner size="sm" />
+                  <Spinner size={16} />
                   <span style={{ fontSize: '0.9rem', color: '#38bdf8', fontWeight: 500 }}>
                     Grounding diagnostic context and generating remediation plan...
                   </span>
@@ -710,7 +710,7 @@ export const CloudAssistant = () => {
                 disabled={submitting || !query.trim()}
               >
                 {submitting ? (
-                  <Spinner size="sm" />
+                  <Spinner size={16} />
                 ) : (
                   <>
                     <Send size={16} />

@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Copy dependency specifications first for layer caching
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm ci
 
 # Pass relative API base URL for containerized Nginx reverse proxy
 ARG VITE_API_BASE_URL=/api
@@ -17,12 +17,9 @@ COPY . .
 RUN npm run build
 
 # ==============================================================================
-# Stage 2: Serve with Production Nginx
+# Stage 2: Serve with Production Nginx (Non-Root)
 # ==============================================================================
-FROM nginx:1.25-alpine AS runner
-
-# Remove default Nginx welcome assets and configuration
-RUN rm -rf /usr/share/nginx/html/* /etc/nginx/conf.d/default.conf
+FROM nginxinc/nginx-unprivileged:1.25-alpine AS runner
 
 # Copy compiled static assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -31,10 +28,11 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose sole production HTTP ingress port
-EXPOSE 80
+EXPOSE 8080
 
 # Health check using BusyBox wget included in Alpine Linux
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:80/ || exit 1
+  CMD wget -qO- http://127.0.0.1:8080/ || exit 1
 
+# Start Nginx
 CMD ["nginx", "-g", "daemon off;"]

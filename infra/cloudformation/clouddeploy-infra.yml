@@ -545,7 +545,8 @@ Resources:
                 "disk": {
                   "measurement": ["disk_used_percent"],
                   "metrics_collection_interval": 60,
-                  "resources": ["/"]
+                  "resources": ["/"],
+                  "drop_device": true
                 }
               },
               "append_dimensions": {

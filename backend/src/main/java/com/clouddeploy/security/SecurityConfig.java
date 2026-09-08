@@ -67,7 +67,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+        // CORS_ALLOWED_ORIGINS accepts a comma-separated list of allowed origins.
+        // Defaults to localhost:5173 for local development.
+        // Set CORS_ALLOWED_ORIGINS in production to your actual domain (e.g. http://your-ec2-ip or https://your-domain.com).
+        String allowedOriginsEnv = System.getenv("CORS_ALLOWED_ORIGINS");
+        List<String> origins;
+        if (allowedOriginsEnv != null && !allowedOriginsEnv.isBlank()) {
+            origins = java.util.Arrays.asList(allowedOriginsEnv.split(","));
+        } else {
+            origins = List.of("http://localhost:5173");
+        }
+        configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

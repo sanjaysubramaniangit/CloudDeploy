@@ -173,7 +173,7 @@ export const ResumeList = ({
           {/* Empty State */}
           {resumes.length === 0 ? (
             <EmptyState
-              icon={<FileText size={48} className="text-muted" />}
+              icon={FileText}
               title="No resumes uploaded yet"
               description="Upload your first candidate resume (PDF, DOCX, or TXT) above to extract text and generate structured AI intelligence."
             />

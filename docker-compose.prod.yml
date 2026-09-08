@@ -20,6 +20,8 @@ services:
       DB_USERNAME: ${DB_USERNAME:-clouddeploy}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be provided}
       DB_DIALECT: org.hibernate.dialect.MySQLDialect
+      DB_USE_SSL: "true"
+      DB_DDL_AUTO: validate
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
       AI_PROVIDER: ${AI_PROVIDER:-}
@@ -30,6 +32,7 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:?AWS_S3_BUCKET must be provided}
       AWS_S3_URL_DURATION: ${AWS_S3_URL_DURATION:-15}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       LOG_FILE: /app/logs/app.log
     volumes:
       - /opt/clouddeploy/logs/backend:/app/logs
@@ -58,13 +61,13 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "80:80"
+      - "80:8080"
     volumes:
       - /opt/clouddeploy/logs/nginx:/var/log/nginx
     networks:
       - clouddeploy-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ || exit 1"]
       interval: 15s
       timeout: 3s
       retries: 3

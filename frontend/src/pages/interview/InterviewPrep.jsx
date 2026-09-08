@@ -181,8 +181,8 @@ export const InterviewPrep = () => {
   // Create Job Description modal handler
   const handleCreateJob = async (e) => {
     e.preventDefault();
-    if (!newJobTitle.trim() || !newJobCompany.trim() || !newJobDescription.trim()) {
-      addToast('Please fill in Job Title, Company, and Job Description', 'error');
+    if (!newJobTitle.trim() || !newJobDescription.trim()) {
+      addToast('Please fill in Job Title and Job Description', 'error');
       return;
     }
 
@@ -268,7 +268,7 @@ export const InterviewPrep = () => {
     return (
       <div className="interview-page">
         <div className="empty-state-box">
-          <Spinner size="lg" />
+          <Spinner size={36} />
           <p style={{ marginTop: '1rem' }}>Loading interview preparation workspace...</p>
         </div>
       </div>
@@ -406,7 +406,7 @@ export const InterviewPrep = () => {
             >
               {generating ? (
                 <>
-                  <Spinner size="sm" />
+                  <Spinner size={16} />
                   <span>Synthesizing Interview Questions...</span>
                 </>
               ) : (
@@ -423,7 +423,7 @@ export const InterviewPrep = () => {
       {/* Active Session / Practice Mode */}
       {loadingSession ? (
         <div className="empty-state-box">
-          <Spinner size="md" />
+          <Spinner size={28} />
           <p style={{ marginTop: '0.75rem' }}>Loading questions...</p>
         </div>
       ) : activeSession && activeSession.questions && activeSession.questions.length > 0 ? (
@@ -660,13 +660,12 @@ export const InterviewPrep = () => {
                 />
               </div>
               <div className="form-group">
-                <label>Company *</label>
+                <label>Company (Optional)</label>
                 <input
                   type="text"
                   placeholder="e.g. Acme Cloud Corp"
                   value={newJobCompany}
                   onChange={(e) => setNewJobCompany(e.target.value)}
-                  required
                 />
               </div>
               <div className="form-group">
