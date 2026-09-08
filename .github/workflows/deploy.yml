@@ -119,6 +119,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
       - name: Authenticate to AWS via OIDC (DeployRole)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -155,8 +158,11 @@ jobs:
           echo " Immutable Target Commit SHA:             ${COMMIT_SHA}"
           echo "=============================================================================="
 
-          DOCKER_COMPOSE_B64=$(base64 -w 0 docker-compose.prod.yml)
-          DEPLOY_SH_B64=$(base64 -w 0 infra/scripts/deploy.sh)
+          test -f "${GITHUB_WORKSPACE}/docker-compose.prod.yml"
+          test -f "${GITHUB_WORKSPACE}/infra/scripts/deploy.sh"
+
+          DOCKER_COMPOSE_B64=$(base64 -w 0 "${GITHUB_WORKSPACE}/docker-compose.prod.yml")
+          DEPLOY_SH_B64=$(base64 -w 0 "${GITHUB_WORKSPACE}/infra/scripts/deploy.sh")
 
           COMMAND_ID=$(aws ssm send-command \
             --region "${AWS_REGION}" \
