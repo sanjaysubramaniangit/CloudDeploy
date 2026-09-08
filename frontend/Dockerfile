@@ -22,10 +22,10 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.25-alpine AS runner
 
 # Copy compiled static assets from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --chown=nginx:nginx --from=builder /app/dist /usr/share/nginx/html
 
 # Copy custom reverse proxy and SPA routing configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chown=nginx:nginx nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose sole production HTTP ingress port
 EXPOSE 8080
