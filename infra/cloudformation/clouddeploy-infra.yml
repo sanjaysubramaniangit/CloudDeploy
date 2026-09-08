@@ -492,8 +492,8 @@ Resources:
           fi
 
           # 3. Install Docker
-          dnf install -y docker git
-          systemctl enable --now docker
+          dnf install -y docker git cronie wget
+          systemctl enable --now docker crond
           usermod -aG docker ec2-user
 
           # 4. Install Docker Compose plugin
@@ -621,7 +621,7 @@ Resources:
           chmod 755 /opt/clouddeploy/infra/scripts/health-check-metric.sh
 
           CRON_JOB="* * * * * /opt/clouddeploy/infra/scripts/health-check-metric.sh >/dev/null 2>&1"
-          (crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab -
+          (crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab - || true
 
           # 9. Save environment template with non-sensitive placeholders
           cat << 'EOF' > /opt/clouddeploy/infra/scripts/fetch-secrets.sh

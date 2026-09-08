@@ -26,10 +26,10 @@ else
     echo "Swap file already exists, skipping creation."
 fi
 
-# 3. Install Docker and Git
-echo "Installing Docker and Git..."
-dnf install -y docker git
-systemctl enable --now docker
+# 3. Install Docker, Git, Cronie, and Wget
+echo "Installing Docker, Git, Cronie, and Wget..."
+dnf install -y docker git cronie wget
+systemctl enable --now docker crond
 usermod -aG docker ec2-user
 
 # 4. Install Docker Compose plugin
@@ -79,7 +79,7 @@ fi
 
 # 8. Register synthetic health check metric cron (every 60 seconds)
 CRON_JOB="* * * * * /opt/clouddeploy/infra/scripts/health-check-metric.sh >/dev/null 2>&1"
-(crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab -
+(crontab -l 2>/dev/null | grep -Fv "health-check-metric.sh" ; echo "$CRON_JOB") | crontab - || true
 
 echo "========================================================"
 echo "CloudDeploy AI host provisioning completed successfully!"
