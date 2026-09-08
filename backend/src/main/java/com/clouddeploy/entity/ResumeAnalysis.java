@@ -54,7 +54,7 @@ public class ResumeAnalysis {
 
     @Convert(converter = StringListConverter.class)
     @Lob
-    @Column(name = "databases", columnDefinition = "TEXT")
+    @Column(name = "database_skills", columnDefinition = "TEXT")
     @Builder.Default
     private List<String> databases = new ArrayList<>();
 
