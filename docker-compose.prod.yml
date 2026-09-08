@@ -21,7 +21,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be provided}
       DB_DIALECT: org.hibernate.dialect.MySQLDialect
       DB_USE_SSL: "true"
-      DB_DDL_AUTO: validate
+      DB_DDL_AUTO: ${DB_DDL_AUTO:-update}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
       AI_PROVIDER: ${AI_PROVIDER:-}

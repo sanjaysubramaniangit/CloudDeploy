@@ -97,7 +97,111 @@ if [ -f "$STATE_FILE" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# 4. Authenticate Docker with Amazon ECR & Pull Target Images
+# 4. Rollback Function: Restores Previous Known-Good Deployment
+# ------------------------------------------------------------------------------
+rollback() {
+    # Disable errexit and traps inside rollback so diagnostics and rollback steps run to completion
+    trap - ERR EXIT
+    set +e
+
+    local exit_code="${1:-1}"
+    local failure_reason="${2:-Deployment verification failed}"
+
+    cd "$APP_DIR"
+
+    echo "=============================================================================="
+    echo " ALERT: DEPLOYMENT FAILED — INITIATING AUTOMATIC ROLLBACK!"
+    echo " Failure Reason:      ${failure_reason}"
+    echo " Failed Backend Tag:  ${TARGET_BACKEND_TAG}"
+    echo " Failed Frontend Tag: ${TARGET_FRONTEND_TAG}"
+    echo "=============================================================================="
+
+    # Capture failure diagnostics to stdout (no secrets dumped)
+    echo "--- Container Service Status ---"
+    docker compose -f docker-compose.prod.yml ps || true
+
+    echo "--- Recent Backend Container Logs (tail 100) ---"
+    docker compose -f docker-compose.prod.yml logs --tail=100 backend || true
+
+    echo "--- Recent Frontend Container Logs (tail 100) ---"
+    docker compose -f docker-compose.prod.yml logs --tail=100 frontend || true
+
+    if [ -n "${PREV_BACKEND_TAG:-}" ] && [ -n "${PREV_FRONTEND_TAG:-}" ]; then
+        echo "Initiating automatic rollback to previous known-good deployment: ${PREV_BACKEND_TAG}..."
+        export BACKEND_IMAGE="${ECR_REGISTRY}/${BACKEND_REPO}:${PREV_BACKEND_TAG}"
+        export FRONTEND_IMAGE="${ECR_REGISTRY}/${FRONTEND_REPO}:${PREV_FRONTEND_TAG}"
+
+        # If a backup of docker-compose.prod.yml exists, restore it for rollback
+        if [ -f "${APP_DIR}/docker-compose.prod.yml.bak" ]; then
+            echo "Restoring previous docker-compose.prod.yml from backup..."
+            cp -f "${APP_DIR}/docker-compose.prod.yml.bak" "${APP_DIR}/docker-compose.prod.yml"
+        fi
+
+        echo "Deploying rollback containers via Docker Compose..."
+        if ! docker compose -f docker-compose.prod.yml up -d --remove-orphans; then
+            echo "CRITICAL: Docker compose up failed during rollback execution!" >&2
+        fi
+
+        # Multi-point health check verification for rollback (timeout: 60 seconds)
+        echo "Beginning rollback health check verification (timeout: 60 seconds)..."
+        local rollback_passed=false
+        local rb_attempts=12
+        local rb_attempt=1
+
+        while [ $rb_attempt -le $rb_attempts ]; do
+            echo "  Rollback health check attempt ${rb_attempt}/${rb_attempts}..."
+            local rb_frontend_ok=false
+            if wget -q -O /dev/null "http://127.0.0.1:80/" 2>/dev/null; then
+                rb_frontend_ok=true
+            fi
+
+            local rb_health_ok=false
+            local rb_resp
+            rb_resp=$(wget -qO- "http://127.0.0.1:80/api/health" 2>/dev/null || true)
+            if echo "$rb_resp" | grep -q "UP"; then
+                rb_health_ok=true
+            fi
+
+            local rb_backend_health
+            rb_backend_health=$(docker inspect --format='{{json .State.Health.Status}}' clouddeploy-backend 2>/dev/null || echo '"unknown"')
+
+            if [ "$rb_frontend_ok" = true ] && [ "$rb_health_ok" = true ] && [ "$rb_backend_health" = '"healthy"' ]; then
+                echo "Rollback SUCCESSFUL: Previous known-good version (${PREV_BACKEND_TAG}) restored and healthy."
+                rollback_passed=true
+                break
+            fi
+
+            sleep 5
+            rb_attempt=$((rb_attempt + 1))
+        done
+
+        if [ "$rollback_passed" = true ]; then
+            echo "Persisting rollback status to ${STATE_FILE}..."
+            cat << EOF > "$STATE_FILE"
+CURRENT_BACKEND_TAG=${PREV_BACKEND_TAG}
+CURRENT_FRONTEND_TAG=${PREV_FRONTEND_TAG}
+PREVIOUS_BACKEND_TAG=${PREV_BACKEND_TAG}
+PREVIOUS_FRONTEND_TAG=${PREV_FRONTEND_TAG}
+DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+STATUS=ROLLED_BACK
+FAILED_TARGET_BACKEND_TAG=${TARGET_BACKEND_TAG}
+FAILED_TARGET_FRONTEND_TAG=${TARGET_FRONTEND_TAG}
+EOF
+            chmod 640 "$STATE_FILE"
+            echo "Production is operational on rolled-back version (${PREV_BACKEND_TAG})."
+        else
+            echo "CRITICAL: Rollback containers also failed health check. Preserving previous state." >&2
+        fi
+    else
+        echo "CRITICAL: No previous known-good deployment tags recorded in ${STATE_FILE}. Cannot safely roll back." >&2
+    fi
+
+    echo "Deployment FAILED. Exiting with non-zero code to notify GitHub Actions." >&2
+    exit "$exit_code"
+}
+
+# ------------------------------------------------------------------------------
+# 5. Authenticate Docker with Amazon ECR & Pull Target Images
 # ------------------------------------------------------------------------------
 echo "Authenticating Docker with Amazon ECR in ${AWS_REGION}..."
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
@@ -115,7 +219,7 @@ if ! docker pull "$TARGET_FRONTEND_IMAGE"; then
 fi
 
 # ------------------------------------------------------------------------------
-# 5. Gracefully Deploy Target Containers via Docker Compose
+# 6. Gracefully Deploy Target Containers via Docker Compose
 # ------------------------------------------------------------------------------
 echo "Deploying target containers via Docker Compose..."
 cd "$APP_DIR"
@@ -123,10 +227,14 @@ cd "$APP_DIR"
 export BACKEND_IMAGE="$TARGET_BACKEND_IMAGE"
 export FRONTEND_IMAGE="$TARGET_FRONTEND_IMAGE"
 
-docker compose -f docker-compose.prod.yml up -d --remove-orphans
+# Explicitly handle docker compose failure so set -e does not bypass rollback
+if ! docker compose -f docker-compose.prod.yml up -d --remove-orphans; then
+    echo "ERROR: Docker compose failed to bring up target containers." >&2
+    rollback 1 "Docker compose up failed (containers unhealthy or failed to start)"
+fi
 
 # ------------------------------------------------------------------------------
-# 6. Multi-Point Health Check Gate
+# 7. Multi-Point Health Check Gate
 # ------------------------------------------------------------------------------
 echo "Beginning multi-point health check verification (timeout: 60 seconds)..."
 
@@ -163,48 +271,8 @@ while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
     ATTEMPT=$((ATTEMPT + 1))
 done
 
-# ------------------------------------------------------------------------------
-# 7. Rollback on Failure vs Success Path
-# ------------------------------------------------------------------------------
 if [ "$HEALTH_PASSED" != true ]; then
-    echo "=============================================================================="
-    echo " ALERT: DEPLOYMENT HEALTH CHECK FAILED AFTER 60 SECONDS!"
-    echo " Target Backend Tag:  ${TARGET_BACKEND_TAG}"
-    echo " Target Frontend Tag: ${TARGET_FRONTEND_TAG}"
-    echo "=============================================================================="
-
-    # Capture failure diagnostics to stdout (no secrets dumped)
-    echo "--- Container Service Status ---"
-    docker compose -f docker-compose.prod.yml ps || true
-
-    echo "--- Recent Backend Container Logs (tail 100) ---"
-    docker compose -f docker-compose.prod.yml logs --tail=100 backend || true
-
-    echo "--- Recent Frontend Container Logs (tail 100) ---"
-    docker compose -f docker-compose.prod.yml logs --tail=100 frontend || true
-
-    # Rollback execution
-    if [ -n "$PREV_BACKEND_TAG" ] && [ -n "$PREV_FRONTEND_TAG" ]; then
-        echo "Initiating automatic rollback to previous known-good deployment: ${PREV_BACKEND_TAG}..."
-        export BACKEND_IMAGE="${ECR_REGISTRY}/${BACKEND_REPO}:${PREV_BACKEND_TAG}"
-        export FRONTEND_IMAGE="${ECR_REGISTRY}/${FRONTEND_REPO}:${PREV_FRONTEND_TAG}"
-
-        docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-        # Verify rollback health
-        sleep 10
-        ROLLBACK_HEALTH=$(wget -qO- "http://127.0.0.1:80/api/health" 2>/dev/null || true)
-        if echo "$ROLLBACK_HEALTH" | grep -q "UP"; then
-            echo "Rollback SUCCESSFUL: Previous known-good version (${PREV_BACKEND_TAG}) restored and healthy."
-        else
-            echo "CRITICAL: Rollback containers also failed health check. Preserving previous state." >&2
-        fi
-    else
-        echo "CRITICAL: No previous known-good deployment tags recorded in ${STATE_FILE}. Cannot safely roll back." >&2
-    fi
-
-    echo "Deployment FAILED. Exiting with non-zero code to notify GitHub Actions."
-    exit 1
+    rollback 1 "Deployment health check failed after 60 seconds"
 fi
 
 # ------------------------------------------------------------------------------
@@ -220,6 +288,12 @@ DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 STATUS=SUCCESS
 EOF
 chmod 640 "$STATE_FILE"
+
+# Save known-good compose configuration as backup for future rollback
+if [ -f "${APP_DIR}/docker-compose.prod.yml" ]; then
+    cp -f "${APP_DIR}/docker-compose.prod.yml" "${APP_DIR}/docker-compose.prod.yml.bak"
+    chmod 640 "${APP_DIR}/docker-compose.prod.yml.bak" 2>/dev/null || true
+fi
 
 echo "Pruning dangling Docker images..."
 docker image prune -f || true

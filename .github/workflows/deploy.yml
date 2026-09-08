@@ -172,6 +172,7 @@ jobs:
             --parameters "commands=[
               \"set -euo pipefail\",
               \"mkdir -p /opt/clouddeploy/infra/scripts\",
+              \"if [ -f /opt/clouddeploy/docker-compose.prod.yml ]; then cp -f /opt/clouddeploy/docker-compose.prod.yml /opt/clouddeploy/docker-compose.prod.yml.bak; fi\",
               \"echo '${DOCKER_COMPOSE_B64}' | base64 -d > /opt/clouddeploy/docker-compose.prod.yml\",
               \"echo '${DEPLOY_SH_B64}' | base64 -d > /opt/clouddeploy/infra/scripts/deploy.sh\",
               \"chmod 750 /opt/clouddeploy/infra/scripts/deploy.sh\",
