@@ -206,15 +206,12 @@ Resources:
                   - ssm:SendCommand
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:*:document/AWS-RunShellScript"
-              # Allow targeting only EC2 instances tagged Name=clouddeploy-ec2-host
+              # Allow targeting EC2 instances in account and region
               - Effect: Allow
                 Action:
                   - ssm:SendCommand
                 Resource:
                   - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-                Condition:
-                  StringEquals:
-                    aws:ResourceTag/Name: !Ref EC2TagValue
               # Allow polling status and retrieving command invocation output
               - Effect: Allow
                 Action:
