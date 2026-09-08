@@ -195,6 +195,11 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # Allow discovering target EC2 host by tag (DescribeInstances requires "*")
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: "*"
               # Allow executing only AWS-RunShellScript document
               - Effect: Allow
                 Action:
