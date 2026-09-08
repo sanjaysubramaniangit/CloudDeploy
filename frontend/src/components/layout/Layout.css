@@ -197,3 +197,34 @@
   color: var(--text-muted);
   margin: 0;
 }
+
+/* Contextual dark SaaS support for AI workspaces */
+.main-content:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) {
+  background-color: #0f172a;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .app-header {
+  background-color: #0f172a;
+  border-bottom: 1px solid #1e293b;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .user-name {
+  color: #f8fafc;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .user-dropdown {
+  background-color: #1e293b;
+  border-color: #334155;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .dropdown-item {
+  color: #f8fafc;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .dropdown-item:hover {
+  background-color: #0f172a;
+}
+
+.main-container:has(.dark-surface, .resume-ai-page, .job-match-page, .interview-page, .cloud-assistant-page) .dropdown-divider {
+  background-color: #334155;
+}

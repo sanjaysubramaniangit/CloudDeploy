@@ -119,6 +119,7 @@
   color: var(--text-main, #f8fafc);
   font-size: 0.875rem;
   outline: none;
+  font-family: inherit;
   transition: border-color 0.15s ease;
 }
 
@@ -126,6 +127,19 @@
 .job-input-control:focus {
   border-color: #6366f1;
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.select-wrapper select::placeholder,
+.job-input-control::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.select-wrapper select:disabled,
+.job-input-control:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(15, 23, 42, 0.6);
 }
 
 .job-preview-box {
@@ -515,6 +529,11 @@
   border: 1px solid var(--border-color, #334155);
   color: var(--text-main, #f8fafc);
   font-size: 0.8125rem;
+}
+
+.search-box-wrap input::placeholder {
+  color: #64748b;
+  opacity: 1;
 }
 
 .search-icon-pos {

@@ -1,5 +1,6 @@
 .card-component {
   background-color: var(--bg-card);
+  color: var(--text-main);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);

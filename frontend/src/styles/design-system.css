@@ -49,3 +49,58 @@ a {
 a:hover {
   text-decoration: underline;
 }
+
+/* Scoped tokens for dark SaaS surfaces */
+.dark-surface,
+.resume-ai-page,
+.job-match-page,
+.interview-page,
+.cloud-assistant-page,
+.job-modal-box,
+.analysis-modal-container,
+.resume-upload-card,
+.resume-list-card,
+.resume-item-card,
+.setup-card,
+.overall-gauge-card,
+.category-score-card,
+.skill-table-card,
+.insight-card,
+.history-card,
+.match-action-bar,
+.interview-setup-card {
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --bg-card: #1e293b;
+  --card-bg: #1e293b;
+  --border: #334155;
+  --border-color: #334155;
+  --input-bg: #0f172a;
+  color: var(--text-main);
+}
+
+.dark-surface h1, .dark-surface h2, .dark-surface h3, .dark-surface h4,
+.resume-ai-page h1, .resume-ai-page h2, .resume-ai-page h3, .resume-ai-page h4,
+.job-match-page h1, .job-match-page h2, .job-match-page h3, .job-match-page h4,
+.job-modal-box h1, .job-modal-box h2, .job-modal-box h3, .job-modal-box h4,
+.analysis-modal-container h1, .analysis-modal-container h2, .analysis-modal-container h3, .analysis-modal-container h4 {
+  color: var(--text-main);
+}
+
+.dark-surface .btn-secondary,
+.resume-ai-page .btn-secondary,
+.job-match-page .btn-secondary,
+.job-modal-box .btn-secondary,
+.analysis-modal-container .btn-secondary {
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+.dark-surface .btn-secondary:hover:not(:disabled),
+.resume-ai-page .btn-secondary:hover:not(:disabled),
+.job-match-page .btn-secondary:hover:not(:disabled),
+.job-modal-box .btn-secondary:hover:not(:disabled),
+.analysis-modal-container .btn-secondary:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}

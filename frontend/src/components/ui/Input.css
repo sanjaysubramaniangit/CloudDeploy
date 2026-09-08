@@ -28,6 +28,17 @@
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 
+.input-field::placeholder {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.input-field:disabled,
+.input-field:read-only {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .input-error {
   border-color: var(--danger);
 }
