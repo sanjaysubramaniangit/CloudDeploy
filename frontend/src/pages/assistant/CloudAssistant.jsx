@@ -218,8 +218,9 @@ export const CloudAssistant = () => {
       setActiveSessionId(data.sessionId);
 
       // Append assistant message
-      if (data.assistantMessage) {
-        setMessages((prev) => [...prev, data.assistantMessage]);
+      const assistantMsg = data.message || data.assistantMessage;
+      if (assistantMsg) {
+        setMessages((prev) => [...prev, assistantMsg]);
       }
 
       // Refresh sessions history list

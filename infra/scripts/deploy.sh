@@ -71,15 +71,43 @@ echo " Target Frontend Tag: ${TARGET_FRONTEND_TAG}"
 echo " ECR Registry:        ${ECR_REGISTRY}"
 echo "=============================================================================="
 
-# Ensure runtime .env exists (pull secrets if missing)
-if [ ! -f "$ENV_FILE" ]; then
-    echo "Runtime environment file not found at ${ENV_FILE}. Invoking fetch-secrets.sh..."
-    if [ -x "${APP_DIR}/infra/scripts/fetch-secrets.sh" ]; then
-        "${APP_DIR}/infra/scripts/fetch-secrets.sh"
-    else
-        echo "ERROR: Cannot resolve runtime credentials. ${APP_DIR}/infra/scripts/fetch-secrets.sh is missing or not executable." >&2
-        exit 1
+# Refresh runtime secrets from AWS SSM Parameter Store if fetch-secrets.sh is available,
+# or safely fall back to existing .env
+if [ -x "${APP_DIR}/infra/scripts/fetch-secrets.sh" ]; then
+    echo "Refreshing runtime environment from AWS SSM Parameter Store via fetch-secrets.sh..."
+    if [ -f "$ENV_FILE" ]; then
+        cp -f "$ENV_FILE" "${ENV_FILE}.bak"
+        chmod 600 "${ENV_FILE}.bak" 2>/dev/null || true
     fi
+    if ! "${APP_DIR}/infra/scripts/fetch-secrets.sh"; then
+        echo "WARNING: fetch-secrets.sh execution failed." >&2
+        if [ -f "${ENV_FILE}.bak" ]; then
+            echo "Restoring previous known-good ${ENV_FILE} from backup..."
+            cp -f "${ENV_FILE}.bak" "$ENV_FILE"
+        else
+            echo "ERROR: fetch-secrets.sh failed and no previous ${ENV_FILE} exists." >&2
+            exit 1
+        fi
+    fi
+
+    # Safety validation: ensure critical secrets are non-empty
+    FETCHED_DB_PASS=$(grep "^DB_PASSWORD=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+    FETCHED_JWT_SEC=$(grep "^JWT_SECRET=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+    if [ -z "$FETCHED_DB_PASS" ] || [ -z "$FETCHED_JWT_SEC" ]; then
+        echo "WARNING: fetch-secrets.sh generated empty credentials for DB_PASSWORD or JWT_SECRET." >&2
+        if [ -f "${ENV_FILE}.bak" ]; then
+            echo "Restoring previous known-good ${ENV_FILE} from backup..."
+            cp -f "${ENV_FILE}.bak" "$ENV_FILE"
+        else
+            echo "ERROR: Generated credentials are empty and no previous ${ENV_FILE} exists." >&2
+            exit 1
+        fi
+    fi
+elif [ -f "$ENV_FILE" ]; then
+    echo "fetch-secrets.sh not found or not executable; preserving existing ${ENV_FILE}."
+else
+    echo "ERROR: Cannot resolve runtime credentials. ${ENV_FILE} is missing and ${APP_DIR}/infra/scripts/fetch-secrets.sh is unavailable." >&2
+    exit 1
 fi
 
 # ------------------------------------------------------------------------------
@@ -135,6 +163,13 @@ rollback() {
         if [ -f "${APP_DIR}/docker-compose.prod.yml.bak" ]; then
             echo "Restoring previous docker-compose.prod.yml from backup..."
             cp -f "${APP_DIR}/docker-compose.prod.yml.bak" "${APP_DIR}/docker-compose.prod.yml"
+        fi
+
+        # If a backup of .env exists, restore it for rollback
+        if [ -f "${ENV_FILE}.bak" ]; then
+            echo "Restoring previous .env from backup..."
+            cp -f "${ENV_FILE}.bak" "$ENV_FILE"
+            chmod 600 "$ENV_FILE" 2>/dev/null || true
         fi
 
         echo "Deploying rollback containers via Docker Compose..."
@@ -293,6 +328,12 @@ chmod 640 "$STATE_FILE"
 if [ -f "${APP_DIR}/docker-compose.prod.yml" ]; then
     cp -f "${APP_DIR}/docker-compose.prod.yml" "${APP_DIR}/docker-compose.prod.yml.bak"
     chmod 640 "${APP_DIR}/docker-compose.prod.yml.bak" 2>/dev/null || true
+fi
+
+# Save known-good runtime environment as backup for future rollback
+if [ -f "$ENV_FILE" ]; then
+    cp -f "$ENV_FILE" "${ENV_FILE}.bak"
+    chmod 600 "${ENV_FILE}.bak" 2>/dev/null || true
 fi
 
 echo "Pruning dangling Docker images..."

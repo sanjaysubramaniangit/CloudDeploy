@@ -11,6 +11,15 @@ set +x
 # Target runtime environment file
 ENV_FILE="/opt/clouddeploy/.env"
 AWS_REGION="${AWS_REGION:-us-east-1}"
+
+# Preserve existing DB_HOST and AWS_S3_BUCKET from .env if not explicitly set in caller environment
+if [ -z "${DB_HOST:-}" ] && [ -f "$ENV_FILE" ]; then
+    DB_HOST=$(grep "^DB_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+fi
+if [ -z "${AWS_S3_BUCKET:-}" ] && [ -f "$ENV_FILE" ]; then
+    AWS_S3_BUCKET=$(grep "^AWS_S3_BUCKET=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+fi
+
 DB_HOST="${DB_HOST:?Error: DB_HOST (RDS endpoint) must be set}"
 DB_USERNAME="${DB_USERNAME:-clouddeploy}"
 DB_NAME="${DB_NAME:-clouddeploy}"
@@ -59,11 +68,12 @@ if [ -z "$AI_KEY" ]; then
     echo "INFO: /clouddeploy/ai_api_key not configured; AI features will operate in graceful 503 fallback mode."
 fi
 
-# 4. Write runtime .env file with strict 600 permissions
-touch "$ENV_FILE"
-chmod 600 "$ENV_FILE"
+# 4. Write runtime .env file atomically with strict 600 permissions
+TMP_ENV="${ENV_FILE}.tmp.$$"
+touch "$TMP_ENV"
+chmod 600 "$TMP_ENV"
 
-cat << EOF > "$ENV_FILE"
+cat << EOF > "$TMP_ENV"
 # ==============================================================================
 # CloudDeploy AI — Auto-generated runtime environment
 # Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -91,6 +101,6 @@ AI_BASE_URL=https://api.openai.com/v1
 AI_TIMEOUT_SECONDS=30
 EOF
 
-# Ensure file ownership and permissions
-chmod 600 "$ENV_FILE"
+chmod 600 "$TMP_ENV"
+mv -f "$TMP_ENV" "$ENV_FILE"
 echo "Runtime environment successfully generated at ${ENV_FILE} (permissions: 600)."
